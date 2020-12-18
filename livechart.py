@@ -5,18 +5,28 @@ import curses
 import asciichartpy
 import time
 from collections import deque
+import sys
+import random
 
 """
 gets one data point. replace this with your own data fetcher
 here it returns my CPU temperature (which only works in linux)
 """
-def get_datapoint(delay = 0.001):
-    temp_file = '/sys/class/thermal/thermal_zone1/temp'
-    with open(temp_file,'r') as fh:
-        tmp_str = fh.readline()
+def get_datapoint(delay = 0.001, zone=1):
+    temp_file = f'/sys/class/thermal/thermal_zone{zone}/temp'
+    try:
+        with open(temp_file, 'r') as fh:
+            tmp = int(fh.readline())
+    except Exception:
+        tmp = random.randint(0, 100*1000)
     time.sleep(delay) # build in a delay so we don't slam the CPU
-    return int(tmp_str)/1000
+    return tmp/1000
 
+def get_type(zone=1):
+    type_file = f'/sys/class/thermal/thermal_zone{zone}/type'
+    with open(type_file,'r') as fh:
+        type_str = fh.readline()
+    return type_str.strip()
 
 class Downsampler:
     """
@@ -49,6 +59,13 @@ def main(stdscr):
     stdscr.nodelay(True) # don't wait for input
     curses.curs_set(0) # hide the cursor
 
+    # this will be hardware dependent and might need to be changed for different systems to find the CPU
+    # the following is very helpful!
+    # paste <(cat /sys/class/thermal/thermal_zone*/type) <(cat /sys/class/thermal/thermal_zone*/temp) | column -s $'\t' -t | sed 's/\(.\)..$/.\1°C/'
+    thermal_zone_number = 1
+    if len(sys.argv) > 1:
+        thermal_zone_number = sys.argv[1]
+
     quit_key = 'q'
 
     # in characters 
@@ -65,13 +82,18 @@ def main(stdscr):
     cum_sum = 0 # used for calculating rolling mean
     ds = Downsampler(downsample_by)
 
+    # try to get type string
+    try:
+        tmp_type = get_type(zone=thermal_zone_number)
+    except Exception:
+        tmp_type = "CPU"
     while True:
         stdscr.erase()
 
         #this_data = get_datapoint() 
-        raw_data = get_datapoint() # get a new datapoint
+        raw_data = get_datapoint(zone=thermal_zone_number) # get a new datapoint
         while (this_data := ds.feed(raw_data)) is None: # feed the downsampler with raw data until it gives us a data point
-            raw_data = get_datapoint() # get a new datapoint
+            raw_data = get_datapoint(zone=thermal_zone_number) # get a new datapoint
 
         # do rolling average computation
         cache.append(this_data)
@@ -85,7 +107,7 @@ def main(stdscr):
         # draw the plot
         to_display = this_avg
         #to_display = this_data
-        stdscr.addstr(0, 0, f"CPU Temperature = {to_display:.2f}°C     ===== press {quit_key} to quit =====")
+        stdscr.addstr(0, 0, f"{tmp_type} Temperature = {to_display:.2f}°C     ===== press {quit_key} to quit =====")
         display.append(to_display)
         stdscr.addstr(1, 0, asciichartpy.plot(display, {'height': plot_height}))
         stdscr.refresh()
