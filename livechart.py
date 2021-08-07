@@ -7,6 +7,7 @@ import time
 from collections import deque
 import sys
 import random
+import os
 
 """
 gets one data point. replace this with your own data fetcher
@@ -53,18 +54,12 @@ class Downsampler:
         return ret_val
 
 
-def main(stdscr):
+def do_curse(stdscr, zone=1):
     # Clear screen
     stdscr.clear() # clear the screen
     stdscr.nodelay(True) # don't wait for input
     curses.curs_set(0) # hide the cursor
-
-    # this will be hardware dependent and might need to be changed for different systems to find the CPU
-    # the following is very helpful!
-    # paste <(cat /sys/class/thermal/thermal_zone*/type) <(cat /sys/class/thermal/thermal_zone*/temp) | column -s $'\t' -t | sed 's/\(.\)..$/.\1°C/'
-    thermal_zone_number = 1
-    if len(sys.argv) > 1:
-        thermal_zone_number = sys.argv[1]
+    thermal_zone_number = zone
 
     quit_key = 'q'
 
@@ -118,5 +113,20 @@ def main(stdscr):
         elif ch == ord('r'): # r key does nothing
             pass
 
+def main():
+    # this will be hardware dependent and might need to be changed for different systems to find the CPU
+    # the following is very helpful!
+    # paste <(ls /sys/class/thermal/ | grep thermal_zone) <(cat /sys/class/thermal/thermal_zone*/type) <(cat /sys/class/thermal/thermal_zone*/temp) | column -s $'\t' -t | sed 's/\(.\)..$/.\1°C/'
+    if len(sys.argv) > 1:
+        thermal_zone_number = int(sys.argv[1])
+    elif 'ix' in os.name:
+        os.system("bash -c \"paste <(ls /sys/class/thermal/ | grep thermal_zone) <(cat /sys/class/thermal/thermal_zone*/type) <(cat /sys/class/thermal/thermal_zone*/temp) | column -s $'\t' -t | sed 's/\(.\)..$/.\1°C/'\"")
+        print('Pick a thermal zone number to monitor [0-N]: ')
+        thermal_zone_number = int(input())
+    else:
+        thermal_zone_number = 1
+
+    curses.wrapper(do_curse, zone=thermal_zone_number)
+
 if __name__ == "__main__":
-    curses.wrapper(main)
+    main()
