@@ -1,0 +1,48 @@
+[build-system]
+requires = ["flit_core >=3.2,<4"]
+build-backend = "flit_core.buildapi"
+
+[project]
+name = "livechart"
+readme = "README.md"
+requires-python = ">=3.8"
+license = {file = "LICENSE.txt"}
+keywords = ["plot", "live", "realtime", "data"]
+authors = [
+  {name = "Greyson Christoforo", email = "grey@christoforo.net"}
+]
+maintainers = [
+  {name = "Greyson Christoforo", email = "grey@christoforo.net"}
+]
+classifiers = [
+  "License :: OSI Approved :: MIT License",
+  "Development Status :: 4 - Beta",
+  "Programming Language :: Python"
+]
+
+dynamic = ['version', 'description']
+
+dependencies = [
+  "asciichartpy"
+]
+
+[project.optional-dependencies]
+test = [
+  "pytest < 5.0.0",
+  "pytest-cov[all]"
+]
+
+[project.urls]
+homepage = "https://github.com/greyltc-org/python-live-chart"
+documentation = "https://github.com/greyltc-org/python-live-chart/blob/master/README.md"
+repository = "https://github.com/greyltc-org/python-live-chart.git"
+changelog = "https://github.com/greyltc-org/python-live-chart/blob/master/CHANGELOG.md"
+
+[project.scripts]
+livechart-cli = "livechart.ncurses_viewer:main"
+
+#[project.gui-scripts]
+#livechart-gui = "spam:main_gui"
+
+#[project.entry-points."spam.magical"]
+#tomatoes = "spam:main_tomatoes"
