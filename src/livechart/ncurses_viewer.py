@@ -73,9 +73,6 @@ def do_curse(stdscr, dtype="random", zone=1):
 
 
 def main():
-    # this will be hardware dependent and might need to be changed for different systems to find the CPU
-    # the following is very helpful!
-    # paste <(ls /sys/class/thermal/ | grep thermal_zone) <(cat /sys/class/thermal/thermal_zone*/type) <(cat /sys/class/thermal/thermal_zone*/temp) | column -s $'\t' -t | sed 's/\(.\)..$/.\1°C/'
     if "ix" in os.name:
         if len(sys.argv) > 1:
             thermal_zone_number = int(sys.argv[1])
