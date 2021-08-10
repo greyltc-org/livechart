@@ -47,9 +47,9 @@ livechart-cli = "livechart.ncurses_viewer:main"
 #[project.entry-points."spam.magical"]
 #tomatoes = "spam:main_tomatoes"
 
-#[tool.yapf]
-#indent_width = 2
-#column_limit = 999999
-
 [tool.black]
 line-length = 999999
+
+# could format like this in case black isn't doing its job: `python -m yapf --recursive --in-place .`
+#[tool.yapf]
+#column_limit = 999999

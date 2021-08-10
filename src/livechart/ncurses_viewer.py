@@ -60,11 +60,7 @@ def do_curse(stdscr, dtype="random", zone=1):
             # draw the plot
             to_display = this_avg
             # to_display = this_data
-            stdscr.addstr(
-                0,
-                0,
-                f"{tmp_type} Temperature = {to_display:.2f}°C     ===== press {quit_key} to quit =====",
-            )
+            stdscr.addstr(0, 0, f"{tmp_type} Temperature = {to_display:.2f}°C     ===== press {quit_key} to quit =====")
             display.append(to_display)
             stdscr.addstr(1, 0, asciichartpy.plot(display, {"height": plot_height}))
             stdscr.refresh()
