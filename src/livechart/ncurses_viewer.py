@@ -10,42 +10,43 @@ import os
 from livechart.lib import Datagetter
 from livechart.lib import Downsampler
 
+
 def do_curse(stdscr, dtype="random", zone=1):
   # Clear screen
-  stdscr.clear() # clear the screen
-  stdscr.nodelay(True) # don't wait for input
-  curses.curs_set(0) # hide the cursor
+  stdscr.clear()  # clear the screen
+  stdscr.nodelay(True)  # don't wait for input
+  curses.curs_set(0)  # hide the cursor
   thermal_zone_number = zone
 
   quit_key = 'q'
 
   delay = 0.001
 
-  # in characters 
+  # in characters
   plot_width = 100
   plot_height = 30
   # TODO: read the terminal size with curses and use that
 
-  average_window_length = round(plot_width/5) # length of running average window
-  downsample_by = 30 # factor for downsampling
+  average_window_length = round(plot_width / 5)  # length of running average window
+  downsample_by = 30  # factor for downsampling
 
-  display = deque([], plot_width) # what we'll be displaying
+  display = deque([], plot_width)  # what we'll be displaying
 
-  cache = deque() # used in calculating the rolling mean
-  cum_sum = 0 # used for calculating rolling mean
+  cache = deque()  # used in calculating the rolling mean
+  cum_sum = 0  # used for calculating rolling mean
   ds = Downsampler(downsample_by)
 
   with Datagetter(dtype=dtype, zone=thermal_zone_number) as dg:
     tmp_type = dg.thermaltype
-    
+
     while True:
       stdscr.erase()
 
-      #this_data = get_datapoint() 
-      raw_data = dg.get # get a new datapoint
-      while (this_data := ds.feed(raw_data)) is None: # feed the downsampler with raw data until it gives us a data point
+      #this_data = get_datapoint()
+      raw_data = dg.get  # get a new datapoint
+      while (this_data := ds.feed(raw_data)) is None:  # feed the downsampler with raw data until it gives us a data point
         time.sleep(delay)
-        raw_data = dg.get # get a new datapoint
+        raw_data = dg.get  # get a new datapoint
 
       # do rolling average computation
       cache.append(this_data)
@@ -54,7 +55,7 @@ def do_curse(stdscr, dtype="random", zone=1):
         pass
       else:
         cum_sum -= cache.popleft()
-      this_avg = cum_sum/float(len(cache))
+      this_avg = cum_sum / float(len(cache))
 
       # draw the plot
       to_display = this_avg
@@ -64,11 +65,12 @@ def do_curse(stdscr, dtype="random", zone=1):
       stdscr.addstr(1, 0, asciichartpy.plot(display, {'height': plot_height}))
       stdscr.refresh()
 
-      ch =  stdscr.getch()
-      if ch == ord(quit_key): # q key ends the program
+      ch = stdscr.getch()
+      if ch == ord(quit_key):  # q key ends the program
         break
-      elif ch == ord('r'): # r key does nothing
+      elif ch == ord('r'):  # r key does nothing
         pass
+
 
 def main():
   # this will be hardware dependent and might need to be changed for different systems to find the CPU
@@ -90,7 +92,7 @@ def main():
       elif user == '1':
         dtype = "random"
       else:
-        raise ValueError(f"{user} is not 0 or 1")      
+        raise ValueError(f"{user} is not 0 or 1")
 
       if user == '0':
         print()
@@ -102,12 +104,13 @@ def main():
           print(user)
         thermal_zone_number = int(user)
       else:
-         thermal_zone_number = 1
+        thermal_zone_number = 1
   else:
     thermal_zone_number = 1
     dtype = "random"
-  
+
   curses.wrapper(do_curse, dtype=dtype, zone=thermal_zone_number)
+
 
 if __name__ == "__main__":
   main()

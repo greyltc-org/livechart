@@ -1,5 +1,6 @@
 import random
 
+
 class Datagetter(object):
   """
   gets one data point at a time
@@ -73,17 +74,17 @@ class Datagetter(object):
       except:
         point_int = float("nan")
     elif self._dtype == "random":
-      point_int = random.randint(0, 100*1000)
+      point_int = random.randint(0, 100 * 1000)
     else:
       point_int = 0
-    return point_int/1000
+    return point_int / 1000
 
   @property
   def thermaltype(self):
     if self._dtype == 'thermal':
       try:
         type_file = f'/sys/class/thermal/thermal_zone{self._zone}/type'
-        with open(type_file,'r') as fh:
+        with open(type_file, 'r') as fh:
           type_str = fh.readline()
         result = type_str.strip()
       except Exception as e:
@@ -93,6 +94,7 @@ class Datagetter(object):
     else:
       result = "None"
     return result
+
 
 class Downsampler(object):
   """
@@ -104,17 +106,17 @@ class Downsampler(object):
   cache = None
   next_sample = None
 
-  def __init__(self, factor = 5):
+  def __init__(self, factor=5):
     self.factor = factor
     self.cache = []
     self.next_sample = 0
-    
+
   def feed(self, sample):
     self.next_sample += 1
     self.cache.append(sample)
 
-    if self.next_sample == self.factor: # the cache is full, compute and return the average
-      ret_val = sum(self.cache)/float(self.factor)
+    if self.next_sample == self.factor:  # the cache is full, compute and return the average
+      ret_val = sum(self.cache) / float(self.factor)
       self.next_sample = 0
       self.cache = []
     else:
