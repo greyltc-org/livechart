@@ -7,8 +7,8 @@ from collections import deque
 import sys
 import os
 
-from lib import Downsampler
-from lib import Datagetter
+from livechart.lib import Datagetter
+from livechart.lib import Downsampler
 
 def do_curse(stdscr, dtype="random", zone=1):
   # Clear screen

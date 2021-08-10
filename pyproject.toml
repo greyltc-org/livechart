@@ -1,6 +1,6 @@
 [build-system]
-requires = ["flit_core >=3.2,<4"]
-build-backend = "flit_core.buildapi"
+requires = ['setuptools >= 40.8.0', 'wheel']
+build-backend = 'setuptools.build_meta'
 
 [project]
 name = "livechart"
@@ -28,15 +28,15 @@ dependencies = [
 
 [project.optional-dependencies]
 test = [
-  "pytest < 5.0.0",
+  "pytest",
   "pytest-cov[all]"
 ]
 
 [project.urls]
-homepage = "https://github.com/greyltc-org/python-live-chart"
-documentation = "https://github.com/greyltc-org/python-live-chart/blob/master/README.md"
-repository = "https://github.com/greyltc-org/python-live-chart.git"
-changelog = "https://github.com/greyltc-org/python-live-chart/blob/master/CHANGELOG.md"
+homepage = "https://github.com/greyltc-org/livechart"
+documentation = "https://github.com/greyltc-org/livechart/blob/master/README.md"
+repository = "https://github.com/greyltc-org/livechart.git"
+changelog = "https://github.com/greyltc-org/livechart/blob/master/CHANGELOG.md"
 
 [project.scripts]
 livechart-cli = "livechart.ncurses_viewer:main"
@@ -46,3 +46,7 @@ livechart-cli = "livechart.ncurses_viewer:main"
 
 #[project.entry-points."spam.magical"]
 #tomatoes = "spam:main_tomatoes"
+
+[tool.yapf]
+indent_width = 2
+column_limit = 999999
