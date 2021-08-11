@@ -2,6 +2,7 @@ import unittest
 from livechart.lib import Datagetter
 from livechart.lib import Downsampler
 import statistics
+import math
 
 
 class DatagetterTestCase(unittest.TestCase):
@@ -21,6 +22,20 @@ class DatagetterTestCase(unittest.TestCase):
             value = dg.get
         self.assertIsInstance(value, float)
 
+    def test_linux_temp_setters(self):
+        """only works in linux"""
+        with Datagetter() as dg:
+            dg.dtype = "thermal"
+            dg.zone = 0
+            value = dg.get
+        self.assertIsInstance(value, float)
+
+    def test_linux_temp_sensor_string(self):
+        """only works in linux"""
+        with Datagetter(dtype="thermal", zone=0) as dg:
+            value = dg.thermaltype
+        self.assertIsInstance(value, str)
+
 
 class DownsamplerTestCase(unittest.TestCase):
     def test_feed(self):
@@ -31,5 +46,5 @@ class DownsamplerTestCase(unittest.TestCase):
             if i == ds_factor - 1:
                 break
             else:
-                self.assertIsNone(ds.feed(sample))
+                self.assertTrue(math.isnan(ds.feed(sample)))
         self.assertEqual(statistics.mean(sequence), ds.feed(sequence[-1]))

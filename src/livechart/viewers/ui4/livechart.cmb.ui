@@ -1,0 +1,43 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<!-- Created with Cambalache 0.7.0 -->
+<interface>
+  <object class="GtkApplicationWindow" id="main_win">
+    <property name="title">livechart GTK4 Viewer</property>
+    <child>
+      <object class="GtkBox">
+        <property name="orientation">vertical</property>
+        <child>
+          <object class="GtkBox">
+            <child>
+              <object class="GtkButton" id="start_btn">
+                <property name="label">_Start</property>
+                <property name="use-underline">True</property>
+                <property name="halign">start</property>
+              </object>
+            </child>
+            <child>
+              <object class="GtkButton" id="stop_btn">
+                <property name="label">Sto_p</property>
+                <property name="use-underline">True</property>
+                <property name="halign">start</property>
+              </object>
+            </child>
+            <child>
+              <object class="GtkButton" id="kill_btn">
+                <property name="label">_Kill</property>
+                <property name="use-underline">True</property>
+                <property name="halign">end</property>
+              </object>
+            </child>
+          </object>
+        </child>
+        <child>
+          <object class="GtkDrawingArea" id="drawing">
+            <property name="height-request">300</property>
+            <property name="width-request">400</property>
+          </object>
+        </child>
+      </object>
+    </child>
+  </object>
+</interface>

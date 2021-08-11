@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<!-- Created with Cambalache 0.7.0 -->
+<interface>
+  <object class="GtkWindow" id="main_win">
+    <property name="title">Hello GTK3!</property>
+  </object>
+</interface>

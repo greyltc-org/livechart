@@ -1,6 +1,6 @@
 [build-system]
-requires = ['setuptools >= 40.8.0', 'wheel']
-build-backend = 'setuptools.build_meta'
+requires = ["flit_core >=3.2"]
+build-backend = "flit_core.buildapi"
 
 [project]
 name = "livechart"
@@ -39,10 +39,13 @@ repository = "https://github.com/greyltc-org/livechart.git"
 changelog = "https://github.com/greyltc-org/livechart/blob/master/CHANGELOG.md"
 
 [project.scripts]
-livechart-cli = "livechart.ncurses_viewer:main"
+livechart-cli = "livechart.viewers.ncurses:main"
 
-#[project.gui-scripts]
-#livechart-gui = "spam:main_gui"
+[project.gui-scripts]
+livechart = "livechart.viewers.gtk4:main"
+livechart-gui = "livechart.viewers.gtk4:main"
+livechart-gtk3 = "livechart.viewers.gtk3:main"
+livechart-gtk4 = "livechart.viewers.gtk4:main"
 
 #[project.entry-points."spam.magical"]
 #tomatoes = "spam:main_tomatoes"

@@ -122,6 +122,6 @@ class Downsampler(object):
             self.next_sample = 0
             self.cache = []
         else:
-            ret_val = None
+            ret_val = float("nan")
 
         return ret_val
