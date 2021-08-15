@@ -95,12 +95,6 @@ class Interface(object):
                     pass
 
     def show(self):
-        try:
-            contents = importlib.resources.contents(__package__)
-            print(f"found resources: {contents}")
-        except Exception as e:
-            print("Didn't find any package resources")
-
         if self.dtype is not None:
             dtype = self.dtype
             thermal_zone_number = self.thermal_zone_number
