@@ -1,4 +1,4 @@
-import importlib
+import importlib.resources
 import pathlib
 import gi
 
@@ -45,7 +45,7 @@ class Interface(object):
         win.present()
 
     def get_ui_data(self):
-        # load the ui file
+        # load the ui file and return it as a big string
         ui_resource_folder_name = "ui4"
         ui_resource_file_name = "livechart.cmb.ui"
         ui_string = None
