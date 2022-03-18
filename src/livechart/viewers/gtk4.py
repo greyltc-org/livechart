@@ -1,9 +1,10 @@
 import importlib.resources
 import pathlib
 import gi
+import sys
 
 gi.require_version("Gtk", "4.0")
-from gi.repository import Gtk
+from gi.repository import Gtk, Gio
 
 
 class Interface(object):
@@ -22,7 +23,7 @@ class Interface(object):
         self.window = b.get_object("main_win")
         # win = self.window
 
-        self.app = Gtk.Application(application_id="org.greyltc.livechart")
+        self.app = Gtk.Application(application_id="org.greyltc.livechart", flags=Gio.ApplicationFlags.FLAGS_NONE)
         app = self.app
         app.connect("activate", self.on_app_activate)
 
@@ -32,22 +33,33 @@ class Interface(object):
 
         win.set_application(app)
 
+        self.create_action("about", self.on_about_action)
+        self.create_action("preferences", self.on_preferences_action)
+
         # win = Gtk.ApplicationWindow(application=app)
         # self.window = win
 
         # win.set_show_menubar(True)
 
-        kill_btn = self.window = b.get_object("kill_btn")
-        kill_btn.connect("clicked", lambda x: win.close())
+        # kill_btn = self.window = b.get_object("kill_btn")
+        # kill_btn.connect("clicked", lambda x: win.close())
 
         # win.set_child(btn)
 
         win.present()
 
+    def on_about_action(self, widget, _):
+        print("app.about action activated")
+        # about = AboutDialog(self.props.active_window)
+        # about.present()
+
+    def on_preferences_action(self, widget, _):
+        print("app.preferences action activated")
+
     def get_ui_data(self):
         # load the ui file and return it as a big string
         ui_resource_folder_name = "ui4"
-        ui_resource_file_name = "livechart.cmb.ui"
+        ui_resource_file_name = "livechart.ui"
         ui_string = None
         if __package__ in [None, ""]:  # not running from a proper packaged install. try to find the ui file anyway
             parent_dir = pathlib.Path(__file__).parent
@@ -61,7 +73,7 @@ class Interface(object):
         return ui_string
 
     def show(self):
-        self.app.run(None)
+        self.app.run(sys.argv)
 
 
 def main():
