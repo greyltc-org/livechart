@@ -8,69 +8,78 @@ from gi.repository import Gtk, Gio
 
 
 class Interface(object):
-    window = None
     app = None
-    b = None
-    ui_data = None
 
     def __init__(self):
-        self.ui_data = self.get_ui_data()
-        assert self.ui_data is not None, "Unable to find UI definition data."
-
-        self.b = Gtk.Builder.new_from_string(self.ui_data, -1)
-        b = self.b
-
-        self.window = b.get_object("main_win")
-        # win = self.window
-
         self.app = Gtk.Application(application_id="org.greyltc.livechart", flags=Gio.ApplicationFlags.FLAGS_NONE)
-        app = self.app
-        app.connect("activate", self.on_app_activate)
+        self.app.connect("activate", self.on_app_activate)
+
+        # setup about dialog
+        self.ad = Gtk.AboutDialog.new()
+        self.ad.props.program_name = "livechart"
+        self.ad.props.version = "0.1.0"
+        self.ad.props.authors = ["Grey Christoforo"]
+        self.ad.props.copyright = "(C) 2022 Grey Christoforo"
+        self.ad.props.logo_icon_name = "org.greyltc.livechart"
 
     def on_app_activate(self, app):
-        win = self.window
-        b = self.b
+        win = self.app.props.active_window
+        if not win:
+            ui_data = self.get_ui_data()
+            assert None not in ui_data.values(), "Unable to find UI definition data."
+            win = Gtk.Builder.new_from_string(ui_data["win"], -1).get_object("win")  # Gtk.ApplicationWindow
+            help_overlay = Gtk.Builder.new_from_string(ui_data["help_overlay"], -1).get_object("help_overlay")  # Gtk.ShortcutsWindow
+            win.set_application(app)
+            win.set_help_overlay(help_overlay)
 
-        win.set_application(app)
+        self.app.set_accels_for_action("win.show-help-overlay", ["<Control>question"])
 
         self.create_action("about", self.on_about_action)
         self.create_action("preferences", self.on_preferences_action)
 
-        # win = Gtk.ApplicationWindow(application=app)
-        # self.window = win
-
-        # win.set_show_menubar(True)
-
-        # kill_btn = self.window = b.get_object("kill_btn")
-        # kill_btn.connect("clicked", lambda x: win.close())
-
-        # win.set_child(btn)
-
         win.present()
 
+    def create_action(self, name, callback):
+        """Add an Action and connect to a callback"""
+        action = Gio.SimpleAction.new(name, None)
+        action.connect("activate", callback)
+        self.app.add_action(action)
+
     def on_about_action(self, widget, _):
-        print("app.about action activated")
-        # about = AboutDialog(self.props.active_window)
-        # about.present()
+        win = self.app.props.active_window
+        self.ad.set_transient_for(win)
+        self.ad.present()
 
     def on_preferences_action(self, widget, _):
         print("app.preferences action activated")
 
     def get_ui_data(self):
-        # load the ui file and return it as a big string
+        """load the ui files and return them as a dict of big strings"""
         ui_resource_folder_name = "ui4"
-        ui_resource_file_name = "livechart.ui"
-        ui_string = None
-        if __package__ in [None, ""]:  # not running from a proper packaged install. try to find the ui file anyway
-            parent_dir = pathlib.Path(__file__).parent
-            ui_file = parent_dir / ui_resource_folder_name / ui_resource_file_name
-            if ui_file.is_file() == True:
-                with open(ui_file) as fh:
-                    ui_string = fh.read()
-        else:
-            ui_string = importlib.resources.read_text(".".join([__package__, ui_resource_folder_name]), ui_resource_file_name)
+        ui_resource_filename_suffix = ".ui.xml"
+        ui_resource_filename_prefixes = ["win", "help_overlay"]
+        ui_strings = {}
 
-        return ui_string
+        # not running from a proper packaged install.
+        if __package__ in [None, ""]:
+            package = False
+            parent_dir = pathlib.Path(__file__).parent
+            ui_dir = parent_dir / ui_resource_folder_name
+        else:
+            package = True
+
+        for ui_resource_file_name_prefix in ui_resource_filename_prefixes:
+            ui_strings[ui_resource_file_name_prefix] = None
+            ui_resource_file_name = ui_resource_file_name_prefix + ui_resource_filename_suffix
+            if package:
+                ui_strings[ui_resource_file_name_prefix] = importlib.resources.read_text(".".join([__package__, ui_resource_folder_name]), ui_resource_file_name)
+            else:
+                ui_file = ui_dir / ui_resource_file_name
+                if ui_file.is_file() == True:
+                    with open(ui_file) as fh:
+                        ui_strings[ui_resource_file_name_prefix] = fh.read()
+
+        return ui_strings
 
     def show(self):
         self.app.run(sys.argv)

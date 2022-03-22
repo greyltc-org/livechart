@@ -1,9 +1,12 @@
 [build-system]
-requires = ["flit_core >=3.2"]
-build-backend = "flit_core.buildapi"
+requires = [
+  "setuptools @ git+https://github.com/pypa/setuptools@experimental/support-pyproject",
+  "wheel",
+]
 
 [project]
 name = "livechart"
+version = "2022.3.22"
 readme = "README.md"
 requires-python = ">=3.8"
 license = {file = "LICENSE.txt"}
@@ -20,7 +23,7 @@ classifiers = [
   "Programming Language :: Python"
 ]
 
-dynamic = ['version', 'description']
+#dynamic = ['version', 'description']
 
 dependencies = [
   "asciichartpy"
@@ -46,9 +49,6 @@ livechart = "livechart.viewers.gtk4:main"
 livechart-gui = "livechart.viewers.gtk4:main"
 livechart-gtk3 = "livechart.viewers.gtk3:main"
 livechart-gtk4 = "livechart.viewers.gtk4:main"
-
-#[project.entry-points."spam.magical"]
-#tomatoes = "spam:main_tomatoes"
 
 [tool.black]
 line-length = 999999
