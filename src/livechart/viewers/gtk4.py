@@ -1,7 +1,9 @@
 import importlib.resources
 import pathlib
 import gi
-import sys
+
+# import sys
+# import argparse
 
 gi.require_version("Gtk", "4.0")
 from gi.repository import Gtk, Gio
@@ -9,6 +11,7 @@ from gi.repository import Gtk, Gio
 
 class Interface(object):
     app = None
+    version = "0.0.0"
 
     def __init__(self):
         self.app = Gtk.Application(application_id="org.greyltc.livechart", flags=Gio.ApplicationFlags.FLAGS_NONE)
@@ -17,25 +20,37 @@ class Interface(object):
         # setup about dialog
         self.ad = Gtk.AboutDialog.new()
         self.ad.props.program_name = "livechart"
-        self.ad.props.version = "0.1.0"
+        self.ad.props.version = self.version
         self.ad.props.authors = ["Grey Christoforo"]
         self.ad.props.copyright = "(C) 2022 Grey Christoforo"
-        self.ad.props.logo_icon_name = "org.greyltc.livechart"
+        self.ad.props.logo_icon_name = "applications-other"
 
     def on_app_activate(self, app):
         win = self.app.props.active_window
         if not win:
             ui_data = self.get_ui_data()
             assert None not in ui_data.values(), "Unable to find UI definition data."
-            win = Gtk.Builder.new_from_string(ui_data["win"], -1).get_object("win")  # Gtk.ApplicationWindow
-            help_overlay = Gtk.Builder.new_from_string(ui_data["help_overlay"], -1).get_object("help_overlay")  # Gtk.ShortcutsWindow
+
+            win_builder = Gtk.Builder(self)
+            if win_builder.add_from_string(ui_data["win"]):
+                win = win_builder.get_object("win")  # Gtk.ApplicationWindow
+            else:
+                raise ValueError("Failed to import main window UI")
+            help_overlay_builder = Gtk.Builder(self)
+            if help_overlay_builder.add_from_string(ui_data["help_overlay"]):
+                help_overlay = help_overlay_builder.get_object("help_overlay")  # Gtk.ShortcutsWindow
+            else:
+                raise ValueError("Failed to import help overlay UI")
             win.set_application(app)
             win.set_help_overlay(help_overlay)
+            win.props.title = f"livechart {self.version}"
 
         self.app.set_accels_for_action("win.show-help-overlay", ["<Control>question"])
 
         self.create_action("about", self.on_about_action)
         self.create_action("preferences", self.on_preferences_action)
+        # win.get_object("st_btn").connect("clicked", self.on_start_action)
+        # self.create_action("start", self.on_start_action)
 
         win.present()
 
@@ -52,6 +67,9 @@ class Interface(object):
 
     def on_preferences_action(self, widget, _):
         print("app.preferences action activated")
+
+    def on_start_action(self, widget):
+        print("app.start action activated")
 
     def get_ui_data(self):
         """load the ui files and return them as a dict of big strings"""
@@ -81,13 +99,15 @@ class Interface(object):
 
         return ui_strings
 
-    def show(self):
-        self.app.run(sys.argv)
+    def run(self):
+        # parser = argparse.ArgumentParser(description="livechart program")
+        # args = parser.parse_args()
+        self.app.run()
 
 
 def main():
     iface = Interface()
-    iface.show()
+    iface.run()
 
 
 if __name__ == "__main__":

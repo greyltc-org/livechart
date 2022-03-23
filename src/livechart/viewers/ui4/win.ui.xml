@@ -14,12 +14,18 @@
         </child>
         <child type="start">
           <object class="GtkButton" id="st_btn">
+            <signal name="clicked" handler="on_start_action"/>
             <property name="label">Start</property>
           </object>
         </child>
         <child type="start">
           <object class="GtkButton" id="stp_btn">
             <property name="label">Stop</property>
+          </object>
+        </child>
+        <child type="start">
+          <object class="GtkLabel" id="val">
+            <property name="label">Value=</property>
           </object>
         </child>
       </object>

@@ -46,6 +46,11 @@ class Gtk4TestCase(unittest.TestCase):
         iface = self.interface()
         self.assertIsInstance(iface, self.interface)
 
+    def test_full_interface(self):
+        """This should fail if it runs in batch mode after the gtk3 case and needs manual user interaction to end"""
+        iface = self.interface()
+        iface.run()
+
 
 class Gtk3TestCase(unittest.TestCase):
     def setUp(self) -> None:
