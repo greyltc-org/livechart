@@ -1,17 +1,27 @@
+import gi
+
+gi.require_version("Gtk", "4.0")
+from gi.repository import GLib, Gtk, Gio
+
+import random
 import importlib.resources
 import pathlib
-import gi
 
 # import sys
 # import argparse
 
-gi.require_version("Gtk", "4.0")
-from gi.repository import Gtk, Gio
+from matplotlib.backends.backend_gtk4cairo import FigureCanvas
+
+# from matplotlib.backends.backend_gtk4agg import FigureCanvas
+from matplotlib.figure import Figure
 
 
 class Interface(object):
     app = None
     version = "0.0.0"
+    backend_server = "localhost"
+    some_widgets = {}
+    data = None
 
     def __init__(self):
         self.app = Gtk.Application(application_id="org.greyltc.livechart", flags=Gio.ApplicationFlags.FLAGS_NONE)
@@ -25,34 +35,70 @@ class Interface(object):
         self.ad.props.copyright = "(C) 2022 Grey Christoforo"
         self.ad.props.logo_icon_name = "applications-other"
 
+        self.randomize()
+
     def on_app_activate(self, app):
         win = self.app.props.active_window
         if not win:
             ui_data = self.get_ui_data()
             assert None not in ui_data.values(), "Unable to find UI definition data."
 
-            win_builder = Gtk.Builder(self)
+            win_builder = Gtk.Builder()
             if win_builder.add_from_string(ui_data["win"]):
                 win = win_builder.get_object("win")  # Gtk.ApplicationWindow
             else:
                 raise ValueError("Failed to import main window UI")
-            help_overlay_builder = Gtk.Builder(self)
+
+            help_overlay_builder = Gtk.Builder()
             if help_overlay_builder.add_from_string(ui_data["help_overlay"]):
                 help_overlay = help_overlay_builder.get_object("help_overlay")  # Gtk.ShortcutsWindow
             else:
                 raise ValueError("Failed to import help overlay UI")
+
+            self.some_widgets["val"] = win_builder.get_object("val")
+
             win.set_application(app)
             win.set_help_overlay(help_overlay)
             win.props.title = f"livechart {self.version}"
 
+            # make actions for menu items
+            self.create_action("about", self.on_about_action)
+            self.create_action("preferences", self.on_preferences_action)
+
+            # connect signals
+            win_builder.get_object("conn_btn").connect("clicked", self.on_conn_btn_clicked)
+            win_builder.get_object("dsc_btn").connect("clicked", self.on_dsc_btn_clicked)
+
+            # setup drawing
+            fig = Figure(figsize=(6, 4), constrained_layout=True)
+            self.canvas = FigureCanvas(fig)  # a Gtk.DrawingArea
+            win.set_child(self.canvas)
+            ax = fig.add_subplot()
+            (self.line,) = ax.plot(self.data, "go")
+            # self.canvas.connect("resize", self.new_plot)
+
         self.app.set_accels_for_action("win.show-help-overlay", ["<Control>question"])
 
-        self.create_action("about", self.on_about_action)
-        self.create_action("preferences", self.on_preferences_action)
-        # win.get_object("st_btn").connect("clicked", self.on_start_action)
-        # self.create_action("start", self.on_start_action)
-
         win.present()
+
+        self.ticker_id = GLib.timeout_add_seconds(1, self.tick, None)
+
+    def update_val(self):
+        if "val" in self.some_widgets:
+            self.some_widgets["val"].props.label = f"Value={self.data[0]:.3f}"
+
+    def randomize(self):
+        self.data = [random.random() for x in range(10)]
+        self.update_val()
+
+    def new_plot(self, *args):
+        self.randomize()
+        self.line.set_ydata(self.data)
+
+    def tick(self, *args):
+        self.new_plot()
+        self.canvas.queue_draw()
+        return True
 
     def create_action(self, name, callback):
         """Add an Action and connect to a callback"""
@@ -66,10 +112,44 @@ class Interface(object):
         self.ad.present()
 
     def on_preferences_action(self, widget, _):
-        print("app.preferences action activated")
+        win = self.app.props.active_window
+        # setup prefs dialog
+        prefs_setup = {}
+        pd = Gtk.Dialog.new()
+        pd.props.title = "Preferences"
+        pd.add_button("OK", Gtk.ResponseType.OK)
+        pd.add_button("Cancel", Gtk.ResponseType.CANCEL)
+        pd.set_transient_for(win)
+        pd.set_default_response(Gtk.ResponseType.OK)
+        pd_content = pd.get_content_area()
+        pd_content.props.margin_top = 5
+        pd_content.props.margin_bottom = 5
+        pd_content.props.margin_start = 5
+        pd_content.props.margin_end = 5
+        pd_content.props.orientation = Gtk.Orientation.HORIZONTAL
+        lbl = Gtk.Label.new("<b>Backend Server: </b>")
+        lbl.props.use_markup = True
+        pd_content.append(lbl)
+        server_box = Gtk.Entry.new()
+        sbb = server_box.get_buffer()
+        sbb.set_text(self.backend_server, -1)
+        self.some_widgets["sbb"] = sbb
+        server_box.props.placeholder_text = "Server Hostname or IP"
+        server_box.props.activates_default = True
+        pd_content.append(server_box)
+        pd.connect("response", self.on_prefs_response)
+        pd.present()
 
-    def on_start_action(self, widget):
-        print("app.start action activated")
+    def on_prefs_response(self, prefs_dialog, response_code):
+        if response_code == Gtk.ResponseType.OK:
+            self.backend_server = self.some_widgets["sbb"].props.text
+        prefs_dialog.destroy()
+
+    def on_conn_btn_clicked(self, widget):
+        print("Connect button clicked")
+
+    def on_dsc_btn_clicked(self, widget):
+        print("Disconnect button clicked")
 
     def get_ui_data(self):
         """load the ui files and return them as a dict of big strings"""
