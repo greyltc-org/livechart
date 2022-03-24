@@ -6,6 +6,8 @@ from gi.repository import GLib, Gtk, Gio
 import random
 import importlib.resources
 import pathlib
+import collections
+import time
 
 # import sys
 # import argparse
@@ -21,7 +23,9 @@ class Interface(object):
     version = "0.0.0"
     backend_server = "localhost"
     some_widgets = {}
-    data = None
+    max_data_length = None  # can be None for unbounded
+    data = collections.deque([(float("nan"), float("nan"))], max_data_length)
+    t0 = 0
 
     def __init__(self):
         self.app = Gtk.Application(application_id="org.greyltc.livechart", flags=Gio.ApplicationFlags.FLAGS_NONE)
@@ -35,7 +39,7 @@ class Interface(object):
         self.ad.props.copyright = "(C) 2022 Grey Christoforo"
         self.ad.props.logo_icon_name = "applications-other"
 
-        self.randomize()
+        self.t0 = time.time()
 
     def on_app_activate(self, app):
         win = self.app.props.active_window
@@ -73,9 +77,12 @@ class Interface(object):
             fig = Figure(figsize=(6, 4), constrained_layout=True)
             self.canvas = FigureCanvas(fig)  # a Gtk.DrawingArea
             win.set_child(self.canvas)
-            ax = fig.add_subplot()
-            (self.line,) = ax.plot(self.data, "go")
-            # self.canvas.connect("resize", self.new_plot)
+            self.ax = fig.add_subplot()
+            self.ax.autoscale(enable=True, axis="x", tight=True)
+            self.ax.autoscale(enable=True, axis="y", tight=False)
+            self.ax.set_xlabel("Time [s]")
+            self.ax.set_ylabel("Value")
+            (self.line,) = self.ax.plot(*zip(*self.data), "go")
 
         self.app.set_accels_for_action("win.show-help-overlay", ["<Control>question"])
 
@@ -85,15 +92,21 @@ class Interface(object):
 
     def update_val(self):
         if "val" in self.some_widgets:
-            self.some_widgets["val"].props.label = f"Value={self.data[0]:.3f}"
+            self.some_widgets["val"].props.label = f"Value={self.data[0][1]:.3f}"
 
-    def randomize(self):
-        self.data = [random.random() for x in range(10)]
+    def new_data(self):
+        self.data.appendleft((time.time() - self.t0, random.random()))
         self.update_val()
 
     def new_plot(self, *args):
-        self.randomize()
-        self.line.set_ydata(self.data)
+        self.new_data()
+        x = [d[0] for d in self.data]
+        y = [d[1] for d in self.data]
+        self.line.set_xdata(x)
+        self.line.set_ydata(y)
+        self.ax.autoscale(enable=True, axis="x", tight=True)
+        self.ax.autoscale(enable=True, axis="y", tight=False)
+        self.ax.relim()
 
     def tick(self, *args):
         self.new_plot()
