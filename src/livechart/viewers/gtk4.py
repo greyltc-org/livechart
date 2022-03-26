@@ -28,6 +28,11 @@ class Interface(object):
     t0 = 0
 
     def __init__(self):
+        try:
+            self.version = version(__package__.split(".")[0])
+        except Exception as e:
+            pass  # this is not a package
+
         self.app = Gtk.Application(application_id="org.greyltc.livechart", flags=Gio.ApplicationFlags.FLAGS_NONE)
         self.app.connect("activate", self.on_app_activate)
 
@@ -194,7 +199,6 @@ class Interface(object):
         else:
             package = True
             resource_path = ".".join([__package__, ui_resource_folder_name])
-            self.version = version(__package__.split(".")[0])
 
         for ui_resource_file_name_prefix in ui_resource_filename_prefixes:
             ui_strings[ui_resource_file_name_prefix] = None
