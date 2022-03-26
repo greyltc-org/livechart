@@ -5,6 +5,7 @@ from gi.repository import GLib, Gtk, Gio
 
 import random
 from importlib import resources
+from importlib.metadata import version
 import pathlib
 import collections
 import time
@@ -193,6 +194,7 @@ class Interface(object):
         else:
             package = True
             resource_path = ".".join([__package__, ui_resource_folder_name])
+            self.version = version(__package__.split(".")[0])
 
         for ui_resource_file_name_prefix in ui_resource_filename_prefixes:
             ui_strings[ui_resource_file_name_prefix] = None
