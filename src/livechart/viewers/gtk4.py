@@ -12,9 +12,8 @@ import time
 # import sys
 # import argparse
 
-from matplotlib.backends.backend_gtk4cairo import FigureCanvas
+from matplotlib.backends.backend_cairo import FigureCanvasCairo, RendererCairo
 
-# from matplotlib.backends.backend_gtk4agg import FigureCanvas
 from matplotlib.figure import Figure
 
 
@@ -73,22 +72,37 @@ class Interface(object):
             win_builder.get_object("conn_btn").connect("clicked", self.on_conn_btn_clicked)
             win_builder.get_object("dsc_btn").connect("clicked", self.on_dsc_btn_clicked)
 
-            # setup drawing
-            fig = Figure(figsize=(6, 4), constrained_layout=True)
-            self.canvas = FigureCanvas(fig)  # a Gtk.DrawingArea
+            # setup the drawing area
+            self.canvas = Gtk.DrawingArea.new()
+            self.canvas.set_draw_func(self.draw_canvas)
             win.set_child(self.canvas)
-            self.ax = fig.add_subplot()
-            self.ax.autoscale(enable=True, axis="x", tight=True)
-            self.ax.autoscale(enable=True, axis="y", tight=False)
-            self.ax.set_xlabel("Time [s]")
-            self.ax.set_ylabel("Value")
-            (self.line,) = self.ax.plot(*zip(*self.data), "go")
+
+            # setup plot
+            fig = Figure(constrained_layout=True)
+            self.dpi = fig.get_dpi()
+            self.fcc = FigureCanvasCairo(fig).figure
+            self.renderer = RendererCairo(self.dpi)
+            self.ax = self.fcc.add_subplot()
+
+        self.ax.autoscale(enable=True, axis="x", tight=True)
+        self.ax.autoscale(enable=True, axis="y", tight=False)
+        self.ax.set_xlabel("Time [s]")
+        self.ax.set_ylabel("Value")
+        (self.line,) = self.ax.plot(*zip(*self.data), "go")
 
         self.app.set_accels_for_action("win.show-help-overlay", ["<Control>question"])
 
         win.present()
 
         self.ticker_id = GLib.timeout_add_seconds(1, self.tick, None)
+
+    def draw_canvas(self, canvas, ctx, lenx, leny):
+        self.fcc.set_size_inches(lenx / self.dpi, leny / self.dpi)
+
+        self.renderer.set_ctx_from_surface(ctx.get_target())
+        self.renderer.set_width_height(lenx, leny)
+
+        self.fcc.draw(self.renderer)
 
     def update_val(self):
         if "val" in self.some_widgets:
