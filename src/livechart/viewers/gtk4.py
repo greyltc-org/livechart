@@ -4,7 +4,7 @@ gi.require_version("Gtk", "4.0")
 from gi.repository import GLib, Gtk, Gio
 
 import random
-import importlib.resources
+from importlib import resources
 import pathlib
 import collections
 import time
@@ -83,11 +83,11 @@ class Interface(object):
             self.fcc = FigureCanvasCairo(fig).figure
             self.renderer = RendererCairo(self.dpi)
             self.ax = self.fcc.add_subplot()
+            self.ax.autoscale(enable=True, axis="x", tight=True)
+            self.ax.autoscale(enable=True, axis="y", tight=False)
+            self.ax.set_xlabel("Time [s]")
+            self.ax.set_ylabel("Value")
 
-        self.ax.autoscale(enable=True, axis="x", tight=True)
-        self.ax.autoscale(enable=True, axis="y", tight=False)
-        self.ax.set_xlabel("Time [s]")
-        self.ax.set_ylabel("Value")
         (self.line,) = self.ax.plot(*zip(*self.data), "go")
 
         self.app.set_accels_for_action("win.show-help-overlay", ["<Control>question"])
@@ -192,12 +192,13 @@ class Interface(object):
             ui_dir = parent_dir / ui_resource_folder_name
         else:
             package = True
+            resource_path = ".".join([__package__, ui_resource_folder_name])
 
         for ui_resource_file_name_prefix in ui_resource_filename_prefixes:
             ui_strings[ui_resource_file_name_prefix] = None
             ui_resource_file_name = ui_resource_file_name_prefix + ui_resource_filename_suffix
             if package:
-                ui_strings[ui_resource_file_name_prefix] = importlib.resources.read_text(".".join([__package__, ui_resource_folder_name]), ui_resource_file_name)
+                ui_strings[ui_resource_file_name_prefix] = resources.read_text(resource_path, ui_resource_file_name)
             else:
                 ui_file = ui_dir / ui_resource_file_name
                 if ui_file.is_file() == True:

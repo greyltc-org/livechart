@@ -6,7 +6,6 @@ requires = [
 
 [project]
 name = "livechart"
-version = "2022.3.22"
 readme = "README.md"
 requires-python = ">=3.8"
 license = {file = "LICENSE.txt"}
@@ -23,7 +22,7 @@ classifiers = [
   "Programming Language :: Python"
 ]
 
-#dynamic = ['version', 'description']
+dynamic = ['version']
 
 dependencies = [
   "asciichartpy"
@@ -49,6 +48,12 @@ livechart = "livechart.viewers.gtk4:main"
 livechart-gui = "livechart.viewers.gtk4:main"
 livechart-gtk3 = "livechart.viewers.gtk3:main"
 livechart-gtk4 = "livechart.viewers.gtk4:main"
+
+[tool.setuptools.dynamic]
+version = {attr = "livechart.__version__"}
+
+[tool.setuptools.package-data]
+"*" = ["*.ui.xml"]
 
 [tool.black]
 line-length = 999999
