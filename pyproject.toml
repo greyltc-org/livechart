@@ -42,6 +42,7 @@ changelog = "https://github.com/greyltc-org/livechart/blob/master/CHANGELOG.md"
 
 [project.scripts]
 livechart-cli = "livechart.viewers.ncurses:main"
+livechart-srv = "livechart.server:main"
 
 [project.gui-scripts]
 livechart = "livechart.viewers.gtk4:main"

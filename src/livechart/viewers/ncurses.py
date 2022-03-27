@@ -7,10 +7,10 @@ import sys
 import os
 import math
 import struct
-
 import selectors
+import asyncio
 
-from ..lib import Datagetter
+from ..server import LiveServer
 from ..lib import Downsampler
 
 
@@ -59,48 +59,46 @@ class Interface(object):
         cache = deque()  # used in calculating the rolling mean
         cum_sum = 0  # used for calculating rolling mean
         ds = Downsampler(downsample_by)
-        sel = selectors.DefaultSelector()
+        # sel = selectors.DefaultSelector()
 
-        with Datagetter(dtype=dtype, zone=thermal_zone_number) as dg:
-            tmp_type = dg.thermaltype
-            sel.register(dg.socket, selectors.EVENT_READ)
+        asyncio.run(self.synchy(ds, delay, stdscr, cache, average_window_length, cum_sum, display, quit_key, plot_height))
 
-            t0 = time.time()
-            quit = False
-            dg.trigger_new()  # ask for a new value
-            while (not quit) and ((time.time() - t0) < self.max_duration):
-                events = sel.select()  # wait for backend to be ready
-                for key, mask in events:
-                    if key.fileobj == dg.socket:  # always true for now since there's only one registration
-                        raw_data = struct.unpack("f", dg.socket.recv(1024))[0]
-                        dg.trigger_new()  # ask for a new value
-                        if math.isnan(this_data := ds.feed(raw_data)):  # feed the downsampler with raw data until it gives us a data point
-                            time.sleep(delay)  # slows everything down. to reduce CPU load
-                        else:  # the downsampler as produced a point for us
-                            stdscr.erase()
+    async def synchy(self, lds, ldelay, lstdscr, lcache, awinlen, lcum_sum, ldisp, lquitkey, ph):
+        reader, writer = await asyncio.open_connection("127.0.0.1", 58741)
+        tmp_type = "words"
+        t0 = time.time()
+        quit = False
+        # dg.trigger_new()  # ask for a new value
+        while (not quit) and ((time.time() - t0) < self.max_duration):
+            vraw = await reader.read(4)
+            raw_data = struct.unpack("f", vraw)[0]  # TODO: possibly handle more than one AND check this length
+            if math.isnan(this_data := lds.feed(raw_data)):  # feed the downsampler with raw data until it gives us a data point
+                time.sleep(ldelay)  # slows everything down. to reduce CPU load
+            else:  # the downsampler as produced a point for us
+                lstdscr.erase()
 
-                            # do rolling average computation
-                            cache.append(this_data)
-                            cum_sum += this_data
-                            if len(cache) < average_window_length:
-                                pass
-                            else:
-                                cum_sum -= cache.popleft()
-                            this_avg = cum_sum / float(len(cache))
+                # do rolling average computation
+                lcache.append(this_data)
+                lcum_sum += this_data
+                if len(lcache) < awinlen:
+                    pass
+                else:
+                    lcum_sum -= lcache.popleft()
+                this_avg = lcum_sum / float(len(lcache))
 
-                            # draw the plot
-                            to_display = this_avg
-                            # to_display = this_data
-                            stdscr.addstr(0, 0, f"{tmp_type} Temperature = {to_display:.2f}°C     ===== press {quit_key} to quit =====")
-                            display.append(to_display)
-                            stdscr.addstr(1, 0, asciichartpy.plot(display, {"height": plot_height}))
-                            stdscr.refresh()
+                # draw the plot
+                to_display = this_avg
+                # to_display = this_data
+                lstdscr.addstr(0, 0, f"{tmp_type} Temperature = {to_display:.2f}°C     ===== press {lquitkey} to quit =====")
+                ldisp.append(to_display)
+                lstdscr.addstr(1, 0, asciichartpy.plot(ldisp, {"height": ph}))
+                lstdscr.refresh()
 
-                        ch = stdscr.getch()
-                        if ch == ord(quit_key):  # q key ends the program
-                            quit = True
-                        elif ch == ord("r"):  # r key does nothing
-                            pass
+            ch = lstdscr.getch()
+            if ch == ord(lquitkey):  # q key ends the program
+                quit = True
+            elif ch == ord("r"):  # r key does nothing
+                pass
 
     def show(self):
         if self.dtype is not None:

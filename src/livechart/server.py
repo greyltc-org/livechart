@@ -22,6 +22,7 @@ class LiveServer(object):
         self.t0 = time.time()
 
     def connect(self):
+        print(f"Listening for clients on {self.srv.server_address}")
         self.srv.server_bind()
         self.srv.server_activate()
         self.sel.register(self.srv.socket, selectors.EVENT_READ, self.accept)
@@ -34,7 +35,7 @@ class LiveServer(object):
         return (conn,)
 
     def get_data(self, conn):
-        data = conn.recv(1024)  # Should be ready
+        data = conn.recv(1024)  # TODO: this is fragile
         if data:
             pass
         else:  # must be a disconnect
@@ -59,7 +60,7 @@ class LiveServer(object):
                         conn = callback_return
                         if len(self.clients) == 0:
                             dg.trigger_new()  # special data request on 0 -> 1 client transition
-                        self.clients.append(conn)
+                        self.clients.append(conn[0])
                     else:  # len will be 2 if not new client
                         # data from connected client
                         conn, data = callback_return
@@ -75,7 +76,10 @@ class LiveServer(object):
                             if len(self.clients) > 0:
                                 dg.trigger_new()  # clients exist, so we'll ask for new data
                                 for c in self.clients:
-                                    c.send(data)  # relay the data to all clients
+                                    try:
+                                        c.send(data)  # relay the data to all clients
+                                    except Exception as e:
+                                        pass  # best effort
 
     def serve(self):
         self.connect()
