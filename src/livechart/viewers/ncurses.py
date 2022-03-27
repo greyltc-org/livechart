@@ -9,8 +9,9 @@ import math
 import struct
 import selectors
 import asyncio
+import json
 
-from ..server import LiveServer
+# from ..server import LiveServer
 from ..lib import Downsampler
 
 
@@ -44,7 +45,7 @@ class Interface(object):
 
         quit_key = "q"
 
-        delay = 0.001
+        # delay = 0.001
 
         # in characters
         plot_width = 100
@@ -61,11 +62,12 @@ class Interface(object):
         ds = Downsampler(downsample_by)
         # sel = selectors.DefaultSelector()
 
-        asyncio.run(self.synchy(ds, delay, stdscr, cache, average_window_length, cum_sum, display, quit_key, plot_height))
+        asyncio.run(self.synchy(ds, stdscr, cache, average_window_length, cum_sum, display, quit_key, plot_height, thermal_zone_number, dtype))
 
-    async def synchy(self, lds, ldelay, lstdscr, lcache, awinlen, lcum_sum, ldisp, lquitkey, ph):
+    async def synchy(self, lds, lstdscr, lcache, awinlen, lcum_sum, ldisp, lquitkey, ph, tzn, datatype):
         reader, writer = await asyncio.open_connection("127.0.0.1", 58741)
-        tmp_type = "words"
+        tmp_type = datatype
+        writer.write(json.dumps({"dtype": datatype, "zone": tzn, "delay": 0}).encode())
         t0 = time.time()
         quit = False
         # dg.trigger_new()  # ask for a new value
@@ -73,7 +75,7 @@ class Interface(object):
             vraw = await reader.read(4)
             raw_data = struct.unpack("f", vraw)[0]  # TODO: possibly handle more than one AND check this length
             if math.isnan(this_data := lds.feed(raw_data)):  # feed the downsampler with raw data until it gives us a data point
-                time.sleep(ldelay)  # slows everything down. to reduce CPU load
+                pass
             else:  # the downsampler as produced a point for us
                 lstdscr.erase()
 

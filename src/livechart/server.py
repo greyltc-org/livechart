@@ -4,6 +4,7 @@ import socketserver
 import selectors
 import time
 from .lib import Datagetter
+import json
 
 # import struct
 
@@ -35,7 +36,10 @@ class LiveServer(object):
         return (conn,)
 
     def get_data(self, conn):
-        data = conn.recv(1024)  # TODO: this is fragile
+        try:
+            data = conn.recv(1024)
+        except Exception as e:
+            data = None
         if data:
             pass
         else:  # must be a disconnect
@@ -44,12 +48,9 @@ class LiveServer(object):
             conn.close()
         return (conn, data)
 
-    def get_value(self, f):
-        return (f, f.recv(1024))
-
     def run(self, timeout=float("inf"), dtype="thermal", zone=8):
         with Datagetter(dtype=dtype, zone=zone) as dg:
-            self.sel.register(dg.socket, selectors.EVENT_READ, self.get_value)
+            self.sel.register(dg.socket, selectors.EVENT_READ, self.get_data)
             while (time.time() - self.t0) < timeout:
                 events = self.sel.select(timeout=0.5)  # timeout is how often to check for timed exit
                 for key, mask in events:
@@ -65,12 +66,21 @@ class LiveServer(object):
                         # data from connected client
                         conn, data = callback_return
                         if conn in self.clients:
-                            if not conn._closed:
-                                # unexpected client data?
-                                print(f"New data from client #{self.clients.index(conn)}, {conn}: {data}")
-                            else:
+                            if (not data) or (conn._closed):  # client diconnect
                                 print(f"Cleaning up client #{self.clients.index(conn)}, {conn}")
                                 del self.clients[self.clients.index(conn)]
+                            else:
+                                try:
+                                    cmd = json.loads(data.decode())
+                                    if "dtype" in cmd:
+                                        dg.dtype = cmd["dtype"]
+                                    if "zone" in cmd:
+                                        dg.zone = cmd["zone"]
+                                    if "delay" in cmd:
+                                        dg.delay = cmd["delay"]
+                                except Exception as e:
+                                    # unexpected client data?
+                                    print(f"New data from client #{self.clients.index(conn)}, {conn}: {data}")
                         else:  # data from getter
                             # print(f"Got new value = {struct.unpack('f', data)[0]}")
                             if len(self.clients) > 0:

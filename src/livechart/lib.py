@@ -2,6 +2,7 @@ import random
 import socket
 import threading
 import struct
+import time
 
 
 class Datagetter(object):
@@ -15,8 +16,10 @@ class Datagetter(object):
     temp_file_name = None
     temp_file_object = None
     _last_val = None
+    delay = 0.001
 
-    def __init__(self, dtype="random", zone=1):
+    def __init__(self, dtype="random", zone=1, delay=0.001):
+        self.delay = delay
         self.zone = zone
         self.dtype = dtype
         _last_val = None
@@ -28,6 +31,7 @@ class Datagetter(object):
         if self._dtype == "thermal":
             self.temp_file_object = open(self.temp_file_name, "r")
         self._socket, self.socket = socket.socketpair()
+        # self._reader, self._writer = await asyncio.open_connection(sock=_socket)
         _last_val = None
         self._stop_doer.clear()
         self._want_new.clear()
@@ -114,6 +118,8 @@ class Datagetter(object):
             point_int = random.randint(0, 100 * 1000)
         else:
             point_int = float("nan")
+        if self.delay > 0:
+            time.sleep(self.delay)  # insert fake delay to avoid too much cpu
         return point_int / 1000
 
     @property
@@ -140,22 +146,23 @@ class Downsampler(object):
     Can be used as an input filter to slow down datarate (and potentially increase precision)
     """
 
-    factor = None
-    cache = None
-    next_sample = None
+    factor = 5
+    cache = []
+    struct.unpack_from
 
     def __init__(self, factor=5):
         self.factor = factor
         self.cache = []
-        self.next_sample = 0
 
-    def feed(self, sample):
-        self.next_sample += 1
-        self.cache.append(sample)
+    def feed(self, input):
+        if isinstance(input, tuple) or isinstance(input, list):
+            self.cache += input
+        else:
+            self.cache.append(input)
+        n_samples = len(self.cache)
 
-        if self.next_sample == self.factor:  # the cache is full, compute and return the average
-            ret_val = sum(self.cache) / float(self.factor)
-            self.next_sample = 0
+        if n_samples >= self.factor:  # the cache is full, compute and return the average
+            ret_val = sum(self.cache) / n_samples
             self.cache = []
         else:
             ret_val = float("nan")
