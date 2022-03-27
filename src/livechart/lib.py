@@ -75,11 +75,6 @@ class Datagetter(object):
             if self._want_new.wait(timeout=0.1):  # this timeout is for how often we check for a stop request
                 self._want_new.clear()
                 self._socket.send(struct.pack("f", self.get))
-                # latest = self.get
-                # while latest == self._last_val:
-                #    # possibly sleep here to save cpu
-                #    latest = self.get
-                # self._socket.send(struct.pack("f", latest))
 
     @property
     def zone(self):

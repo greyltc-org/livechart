@@ -2,12 +2,10 @@
 
 import socketserver
 import selectors
-import socket
 import time
-import io
 from .lib import Datagetter
 
-# from .lib import Downsampler
+# import struct
 
 
 class LiveServer(object):
@@ -31,7 +29,7 @@ class LiveServer(object):
     def accept(self, sock):
         conn, addr = sock.accept()  # accept a connection
         print(f"Accepted new connection: {conn} from ip {addr}")
-        conn.setblocking(False)
+        # conn.setblocking(False)
         self.sel.register(conn, selectors.EVENT_READ, self.get_data)
         return (conn,)
 
@@ -45,44 +43,39 @@ class LiveServer(object):
             conn.close()
         return (conn, data)
 
-    def get_temp(self, f):
-        data = f.readline()
-        f.seek(0)
-        return (f, data)
+    def get_value(self, f):
+        return (f, f.recv(1024))
 
-    def run(self, timeout=float("inf"), dtype="thermal", zone=1):
+    def run(self, timeout=float("inf"), dtype="thermal", zone=8):
         with Datagetter(dtype=dtype, zone=zone) as dg:
-            self.sel.register(dg.temp_file_object, selectors.EVENT_READ, self.get_temp)
+            self.sel.register(dg.socket, selectors.EVENT_READ, self.get_value)
             while (time.time() - self.t0) < timeout:
-                events = self.sel.select()
+                events = self.sel.select(timeout=0.5)  # timeout is how often to check for timed exit
                 for key, mask in events:
                     callback = key.data
                     callback_return = callback(key.fileobj)
-                    if isinstance(callback_return[0], socket.socket):  # network evengt
-                        if len(callback_return) == 1:
-                            # new client
-                            conn = callback_return
-                            self.clients.append(conn)
-                        else:  # len will be 2
-                            # data from connected client
-                            conn, data = callback_return
-                            if conn in self.clients:
-                                if not conn._closed:
-                                    print(f"New data from client #{self.clients.index(conn)}, {conn}: {data}")
-                                else:
-                                    print(f"Cleaning up client #{self.clients.index(conn)}, {conn}")
-                                    del self.clients[self.clients.index(conn)]
+                    if len(callback_return) == 1:
+                        # new client
+                        conn = callback_return
+                        if len(self.clients) == 0:
+                            dg.trigger_new()  # special data request on 0 -> 1 client transition
+                        self.clients.append(conn)
+                    else:  # len will be 2 if not new client
+                        # data from connected client
+                        conn, data = callback_return
+                        if conn in self.clients:
+                            if not conn._closed:
+                                # unexpected client data?
+                                print(f"New data from client #{self.clients.index(conn)}, {conn}: {data}")
                             else:
-                                print("Unknown client!")
-                    elif isinstance(callback_return[0], io.IOBase):
-                        td = callback_return[1]
-                        if len(td) > 0:
-                            print(f"Tmpdat = {callback_return[1]}")
-                    else:
-                        print("Unexpected event!")
-
-                # val = dg.get
-                # pass
+                                print(f"Cleaning up client #{self.clients.index(conn)}, {conn}")
+                                del self.clients[self.clients.index(conn)]
+                        else:  # data from getter
+                            # print(f"Got new value = {struct.unpack('f', data)[0]}")
+                            if len(self.clients) > 0:
+                                dg.trigger_new()  # clients exist, so we'll ask for new data
+                                for c in self.clients:
+                                    c.send(data)  # relay the data to all clients
 
     def serve(self):
         self.connect()

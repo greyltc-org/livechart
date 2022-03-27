@@ -12,6 +12,9 @@ import time
 from matplotlib.backends.backend_cairo import FigureCanvasCairo, RendererCairo
 from matplotlib.figure import Figure
 
+from ..lib import Datagetter
+from ..lib import Downsampler
+
 # import sys
 # import argparse
 
