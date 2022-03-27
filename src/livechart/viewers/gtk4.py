@@ -9,13 +9,11 @@ from importlib.metadata import version
 import pathlib
 import collections
 import time
+from matplotlib.backends.backend_cairo import FigureCanvasCairo, RendererCairo
+from matplotlib.figure import Figure
 
 # import sys
 # import argparse
-
-from matplotlib.backends.backend_cairo import FigureCanvasCairo, RendererCairo
-
-from matplotlib.figure import Figure
 
 
 class Interface(object):

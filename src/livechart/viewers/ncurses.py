@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-import importlib
 import curses
 import time
 import asciichartpy
@@ -7,6 +6,8 @@ from collections import deque
 import sys
 import os
 import math
+
+# import selectors
 
 from ..lib import Datagetter
 from ..lib import Downsampler
@@ -57,6 +58,7 @@ class Interface(object):
         cache = deque()  # used in calculating the rolling mean
         cum_sum = 0  # used for calculating rolling mean
         ds = Downsampler(downsample_by)
+        # sel = selectors.DefaultSelector()
 
         with Datagetter(dtype=dtype, zone=thermal_zone_number) as dg:
             tmp_type = dg.thermaltype
