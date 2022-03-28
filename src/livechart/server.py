@@ -78,6 +78,8 @@ class LiveServer(object):
                                         dg.zone = cmd["zone"]
                                     if "delay" in cmd:
                                         dg.delay = cmd["delay"]
+                                    if "thermaltype" in cmd:
+                                        conn.send(f"{dg.thermaltype}\n".encode())
                                 except Exception as e:
                                     # unexpected client data?
                                     print(f"New data from client #{self.clients.index(conn)}, {conn}: {data}")

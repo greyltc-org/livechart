@@ -1,7 +1,7 @@
 import gi
 
 gi.require_version("Gtk", "4.0")
-from gi.repository import GLib, Gtk, Gio
+from gi.repository import GLib, Gtk, Gio, GObject
 
 import random
 from importlib import resources
@@ -11,9 +11,10 @@ import collections
 import time
 from matplotlib.backends.backend_cairo import FigureCanvasCairo, RendererCairo
 from matplotlib.figure import Figure
+import struct
 
-from ..lib import Datagetter
-from ..lib import Downsampler
+# from ..lib import Datagetter
+# from ..lib import Downsampler
 
 # import sys
 # import argparse
@@ -23,6 +24,7 @@ class Interface(object):
     app = None
     version = "0.0.0"
     backend_server = "localhost"
+    backend_server_port = 58741
     some_widgets = {}
     max_data_length = None  # can be None for unbounded
     data = collections.deque([(float("nan"), float("nan"))], max_data_length)
@@ -36,6 +38,7 @@ class Interface(object):
 
         self.app = Gtk.Application(application_id="org.greyltc.livechart", flags=Gio.ApplicationFlags.FLAGS_NONE)
         self.app.connect("activate", self.on_app_activate)
+        self.app.connect("shutdown", self.on_app_shutdown)
 
         # setup about dialog
         self.ad = Gtk.AboutDialog.new()
@@ -46,6 +49,7 @@ class Interface(object):
         self.ad.props.logo_icon_name = "applications-other"
 
         self.t0 = time.time()
+        self.s = Gio.SocketClient.new()
 
     def on_app_activate(self, app):
         win = self.app.props.active_window
@@ -78,6 +82,7 @@ class Interface(object):
             # connect signals
             win_builder.get_object("conn_btn").connect("clicked", self.on_conn_btn_clicked)
             win_builder.get_object("dsc_btn").connect("clicked", self.on_dsc_btn_clicked)
+            GObject.Object.connect(self.s, "event", self.on_sock_event)  # need to be careful to use the proper .connect() here
 
             # setup the drawing area
             self.canvas = Gtk.DrawingArea.new()
@@ -103,6 +108,10 @@ class Interface(object):
 
         self.ticker_id = GLib.timeout_add_seconds(1, self.tick, None)
 
+    def on_sock_event(self, socket_client, event, network_address, data):
+        print(f"A socket thing! {event=}")
+        # TODO: check the event and then call conn.read_bytes_async to register handle_data
+
     def draw_canvas(self, canvas, ctx, lenx, leny):
         self.fcc.set_size_inches(lenx / self.dpi, leny / self.dpi)
 
@@ -115,8 +124,20 @@ class Interface(object):
         if "val" in self.some_widgets:
             self.some_widgets["val"].props.label = f"Value={self.data[0][1]:.3f}"
 
+    def handle_data(self):
+        # need to call read_bytes_finish
+        # then trigger stuff as tick() does
+
+        pass
+
     def new_data(self):
-        self.data.appendleft((time.time() - self.t0, random.random()))
+        try:
+            vraw = self.conn.props.input_stream.read_bytes(4).unref_to_data()
+            dat = struct.unpack("f", vraw)[0]
+        except Exception as e:
+            dat = random.random()
+
+        self.data.appendleft((time.time() - self.t0, dat))
         self.update_val()
 
     def new_plot(self, *args):
@@ -180,10 +201,21 @@ class Interface(object):
         prefs_dialog.destroy()
 
     def on_conn_btn_clicked(self, widget):
+        self.conn = self.s.connect_to_host(self.backend_server, self.backend_server_port)
         print("Connect button clicked")
 
     def on_dsc_btn_clicked(self, widget):
+        self.close_conn()
         print("Disconnect button clicked")
+
+    def close_conn(self):
+        try:
+            self.conn.close()
+        except Exception as e:
+            pass
+
+    def on_app_shutdown(self, app):
+        self.close_conn()
 
     def get_ui_data(self):
         """load the ui files and return them as a dict of big strings"""

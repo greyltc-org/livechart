@@ -66,8 +66,9 @@ class Interface(object):
 
     async def synchy(self, lds, lstdscr, lcache, awinlen, lcum_sum, ldisp, lquitkey, ph, tzn, datatype):
         reader, writer = await asyncio.open_connection("127.0.0.1", 58741)
-        tmp_type = datatype
-        writer.write(json.dumps({"dtype": datatype, "zone": tzn, "delay": 0}).encode())
+        writer.write(json.dumps({"dtype": datatype, "zone": tzn, "delay": 1, "thermaltype": 0}).encode())
+        thermaltype_response = await reader.readline()
+        tmp_type = thermaltype_response.decode().strip()
         t0 = time.time()
         quit = False
         # dg.trigger_new()  # ask for a new value
@@ -122,7 +123,7 @@ class Interface(object):
 
             if user == "0":
                 print()
-                os.system("bash -c \"paste <(ls /sys/class/thermal/ | grep thermal_zone) <(cat /sys/class/thermal/thermal_zone*/type) <(cat /sys/class/thermal/thermal_zone*/temp) | column -s $'\t' -t | sed 's/\(.\)..$/.\1°C/'\"")
+                os.system("bash -c \"paste <(find -L /sys/class/thermal -maxdepth 1 -path '*zone*'  2> /dev/null -exec basename {} \;) <(find -L /sys/class/thermal -maxdepth 2 -name 'type' -path '*zone*'  2> /dev/null -exec cat {} \;) <(find -L /sys/class/thermal -maxdepth 2 -name 'temp' -path '*zone*'  2> /dev/null -exec awk -v d=1000 '{print (\$1/d)\\\"°C\\\"}'g {} \;) | column -s $'\t' -t\"")
                 print("Pick a thermal zone number to monitor [0-N]: ", end="")
                 user = input()
                 if user == "":
