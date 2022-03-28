@@ -36,7 +36,7 @@ class Interface(object):
         if self.thermal_zone_number == -1:
             self.dtype = "random"
 
-    def do_curse(self, stdscr, dtype="random", zone=1):
+    def do_curse(self, stdscr, dtype="random", zone=1, delay=0.001):
         # Clear screen
         stdscr.clear()  # clear the screen
         stdscr.nodelay(True)  # don't wait for input
@@ -62,11 +62,11 @@ class Interface(object):
         ds = Downsampler(downsample_by)
         # sel = selectors.DefaultSelector()
 
-        asyncio.run(self.synchy(ds, stdscr, cache, average_window_length, cum_sum, display, quit_key, plot_height, thermal_zone_number, dtype))
+        asyncio.run(self.synchy(ds, stdscr, cache, average_window_length, cum_sum, display, quit_key, plot_height, thermal_zone_number, dtype, delay))
 
-    async def synchy(self, lds, lstdscr, lcache, awinlen, lcum_sum, ldisp, lquitkey, ph, tzn, datatype):
+    async def synchy(self, lds, lstdscr, lcache, awinlen, lcum_sum, ldisp, lquitkey, ph, tzn, datatype, delay):
         reader, writer = await asyncio.open_connection("127.0.0.1", 58741)
-        writer.write(json.dumps({"dtype": datatype, "zone": tzn, "delay": 1, "thermaltype": 0}).encode())
+        writer.write(json.dumps({"dtype": datatype, "zone": tzn, "delay": delay, "thermaltype": 0}).encode())
         thermaltype_response = await reader.readline()
         tmp_type = thermaltype_response.decode().strip()
         t0 = time.time()
@@ -108,6 +108,13 @@ class Interface(object):
             dtype = self.dtype
             thermal_zone_number = self.thermal_zone_number
         else:
+            print("Enter delay seconds between data points [0.001]: ", end="")
+            user = input()
+            if user == "":
+                user = "0.001"
+                print(user)
+            delay = float(user)
+
             print("Enter 1 for random data or 0 for thermal data [1]: ", end="")
             user = input()
             if user == "":
@@ -133,7 +140,7 @@ class Interface(object):
             else:
                 thermal_zone_number = 1
 
-        return curses.wrapper(self.do_curse, dtype=dtype, zone=thermal_zone_number)
+        return curses.wrapper(self.do_curse, dtype=dtype, zone=thermal_zone_number, delay=delay)
 
 
 def main():

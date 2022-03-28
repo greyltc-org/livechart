@@ -1,9 +1,8 @@
 import gi
 
 gi.require_version("Gtk", "4.0")
-from gi.repository import GLib, Gtk, Gio, GObject
+from gi.repository import GLib, Gtk, Gio
 
-import random
 from importlib import resources
 from importlib.metadata import version
 import pathlib
@@ -26,7 +25,7 @@ class Interface(object):
     backend_server = "localhost"
     backend_server_port = 58741
     some_widgets = {}
-    max_data_length = None  # can be None for unbounded
+    max_data_length = 500  # can be None for unbounded
     data = collections.deque([(float("nan"), float("nan"))], max_data_length)
     t0 = 0
 
@@ -82,7 +81,6 @@ class Interface(object):
             # connect signals
             win_builder.get_object("conn_btn").connect("clicked", self.on_conn_btn_clicked)
             win_builder.get_object("dsc_btn").connect("clicked", self.on_dsc_btn_clicked)
-            GObject.Object.connect(self.s, "event", self.on_sock_event)  # need to be careful to use the proper .connect() here
 
             # setup the drawing area
             self.canvas = Gtk.DrawingArea.new()
@@ -106,12 +104,6 @@ class Interface(object):
 
         win.present()
 
-        self.ticker_id = GLib.timeout_add_seconds(1, self.tick, None)
-
-    def on_sock_event(self, socket_client, event, network_address, data):
-        print(f"A socket thing! {event=}")
-        # TODO: check the event and then call conn.read_bytes_async to register handle_data
-
     def draw_canvas(self, canvas, ctx, lenx, leny):
         self.fcc.set_size_inches(lenx / self.dpi, leny / self.dpi)
 
@@ -124,24 +116,19 @@ class Interface(object):
         if "val" in self.some_widgets:
             self.some_widgets["val"].props.label = f"Value={self.data[0][1]:.3f}"
 
-    def handle_data(self):
-        # need to call read_bytes_finish
-        # then trigger stuff as tick() does
-
-        pass
-
-    def new_data(self):
+    def handle_data(self, input_stream, result):
         try:
-            vraw = self.conn.props.input_stream.read_bytes(4).unref_to_data()
-            dat = struct.unpack("f", vraw)[0]
+            input_stream.read_bytes_async(4, GLib.PRIORITY_DEFAULT, None, self.handle_data)
+            vraw = input_stream.read_bytes_finish(result)
+            dat = struct.unpack("f", vraw.unref_to_data())[0]
+            self.data.appendleft((time.time() - self.t0, dat))
+            self.update_val()
+            self.new_plot()
+            self.canvas.queue_draw()
         except Exception as e:
-            dat = random.random()
-
-        self.data.appendleft((time.time() - self.t0, dat))
-        self.update_val()
+            pass
 
     def new_plot(self, *args):
-        self.new_data()
         x = [d[0] for d in self.data]
         y = [d[1] for d in self.data]
         self.line.set_xdata(x)
@@ -149,11 +136,6 @@ class Interface(object):
         self.ax.autoscale(enable=True, axis="x", tight=True)
         self.ax.autoscale(enable=True, axis="y", tight=False)
         self.ax.relim()
-
-    def tick(self, *args):
-        self.new_plot()
-        self.canvas.queue_draw()
-        return True
 
     def create_action(self, name, callback):
         """Add an Action and connect to a callback"""
@@ -197,16 +179,26 @@ class Interface(object):
 
     def on_prefs_response(self, prefs_dialog, response_code):
         if response_code == Gtk.ResponseType.OK:
-            self.backend_server = self.some_widgets["sbb"].props.text
+            sbb_txt = self.some_widgets["sbb"].props.text
+            sbb_txt_split = sbb_txt.split(":")
+            self.backend_server = sbb_txt_split[0]
+            if len(sbb_txt_split) > 1:
+                self.backend_server_port = int(sbb_txt_split[1])
         prefs_dialog.destroy()
 
+    def on_connect(self, socket_client, result):
+        conn = socket_client.connect_to_host_finish(result)
+        conn.props.input_stream.read_bytes_async(4, GLib.PRIORITY_DEFAULT, None, self.handle_data)
+        self.conn = conn
+
     def on_conn_btn_clicked(self, widget):
-        self.conn = self.s.connect_to_host(self.backend_server, self.backend_server_port)
-        print("Connect button clicked")
+        if hasattr(self, "conn") and (not self.conn.props.closed):
+            print("Already connected!")
+        else:
+            self.s.connect_to_host_async(self.backend_server, self.backend_server_port, None, self.on_connect)
 
     def on_dsc_btn_clicked(self, widget):
         self.close_conn()
-        print("Disconnect button clicked")
 
     def close_conn(self):
         try:
