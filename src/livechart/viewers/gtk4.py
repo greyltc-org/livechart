@@ -1,7 +1,8 @@
 import gi
 
 gi.require_version("Gtk", "4.0")
-from gi.repository import GLib, Gtk, Gio
+gi.require_version("Adw", "1")
+from gi.repository import GLib, Gtk, Gio, GObject, Adw
 
 from importlib import resources
 from importlib.metadata import version
@@ -81,11 +82,14 @@ class Interface(object):
             # connect signals
             win_builder.get_object("conn_btn").connect("clicked", self.on_conn_btn_clicked)
             win_builder.get_object("dsc_btn").connect("clicked", self.on_dsc_btn_clicked)
+            # GObject.Object.connect(self.s, "event", self.handle_socket_client_event)  # need to be careful to call correct connect()
 
-            # setup the drawing area
+            # setup a toasty drawing area
             self.canvas = Gtk.DrawingArea.new()
             self.canvas.set_draw_func(self.draw_canvas)
-            win.set_child(self.canvas)
+            self.tol = Adw.ToastOverlay.new()
+            self.tol.set_child(self.canvas)
+            win.set_child(self.tol)
 
             # setup plot
             fig = Figure(constrained_layout=True)
@@ -104,6 +108,9 @@ class Interface(object):
 
         win.present()
 
+    # def handle_socket_client_event(self, socket_client, event, network_address, data):
+    #    print(event)
+
     def draw_canvas(self, canvas, ctx, lenx, leny):
         self.fcc.set_size_inches(lenx / self.dpi, leny / self.dpi)
 
@@ -117,16 +124,18 @@ class Interface(object):
             self.some_widgets["val"].props.label = f"Value={self.data[0][1]:.3f}"
 
     def handle_data(self, input_stream, result):
-        try:
-            input_stream.read_bytes_async(4, GLib.PRIORITY_DEFAULT, None, self.handle_data)
-            vraw = input_stream.read_bytes_finish(result)
-            dat = struct.unpack("f", vraw.unref_to_data())[0]
-            self.data.appendleft((time.time() - self.t0, dat))
-            self.update_val()
-            self.new_plot()
-            self.canvas.queue_draw()
-        except Exception as e:
-            pass
+        if not input_stream.props.socket.is_closed():
+            try:
+                vraw = input_stream.read_bytes_finish(result)
+                dat = struct.unpack("f", vraw.unref_to_data())[0]
+                input_stream.read_bytes_async(4, GLib.PRIORITY_DEFAULT, None, self.handle_data)
+            except Exception as e:
+                self.close_conn()
+            else:
+                self.data.appendleft((time.time() - self.t0, dat))
+                self.update_val()
+                self.new_plot()
+                self.canvas.queue_draw()
 
     def new_plot(self, *args):
         x = [d[0] for d in self.data]
@@ -187,13 +196,21 @@ class Interface(object):
         prefs_dialog.destroy()
 
     def on_connect(self, socket_client, result):
-        conn = socket_client.connect_to_host_finish(result)
-        conn.props.input_stream.read_bytes_async(4, GLib.PRIORITY_DEFAULT, None, self.handle_data)
-        self.conn = conn
+        try:
+            conn = socket_client.connect_to_host_finish(result)
+            conn.props.socket.set_timeout(1)
+            conn.props.input_stream.read_bytes_async(4, GLib.PRIORITY_DEFAULT, None, self.handle_data)
+            self.conn = conn
+        except Exception as e:
+            toast = Adw.Toast.new(e.message)
+            toast.props.timeout = 1
+            self.tol.add_toast(toast)
 
     def on_conn_btn_clicked(self, widget):
         if hasattr(self, "conn") and (not self.conn.props.closed):
-            print("Already connected!")
+            toast = Adw.Toast.new("Already connected!")
+            toast.props.timeout = 1
+            self.tol.add_toast(toast)
         else:
             self.s.connect_to_host_async(self.backend_server, self.backend_server_port, None, self.on_connect)
 
@@ -202,9 +219,18 @@ class Interface(object):
 
     def close_conn(self):
         try:
-            self.conn.close()
+            self.conn.close_async(GLib.PRIORITY_DEFAULT, None, self.handle_close)
         except Exception as e:
             pass
+
+    def handle_close(self, io_stream, result):
+        success = io_stream.close_finish(result)
+        if success:
+            toast = Adw.Toast.new("Connection closed.")
+        else:
+            toast = Adw.Toast.new("Connection not closed.")
+        toast.props.timeout = 1
+        self.tol.add_toast(toast)
 
     def on_app_shutdown(self, app):
         self.close_conn()
