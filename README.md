@@ -26,7 +26,7 @@ PYTHONPATH="src" python -m unittest -v
 
 # with code coverage report
 PYTHONPATH="src" coverage run --source livechart -m unittest -v; coverage report
-
+```
 ## Combo
 ```
 rm -rf someplace/; rm -rf dist/; python -m build --wheel; python -m installer --destdir="./someplace" dist/*.whl
