@@ -108,17 +108,19 @@ class Interface(object):
             dtype = self.dtype
             thermal_zone_number = self.thermal_zone_number
         else:
-            print("Enter delay seconds between data points [0.001]: ", end="")
+            default = "0.001"
+            print(f"Enter delay seconds between data points [{default}]: ", end="")
             user = input()
             if user == "":
-                user = "0.001"
+                user = default
                 print(user)
             delay = float(user)
 
-            print("Enter 1 for random data or 0 for thermal data [1]: ", end="")
+            default = "0"
+            print(f"Enter 1 for random data or 0 for thermal data [{default}]: ", end="")
             user = input()
             if user == "":
-                user = "1"
+                user = default
                 print(user)
 
             if user == "0":
@@ -129,12 +131,13 @@ class Interface(object):
                 raise ValueError(f"{user} is not 0 or 1")
 
             if user == "0":
+                default = "7"
                 print()
                 os.system("bash -c \"paste <(find -L /sys/class/thermal -maxdepth 1 -path '*zone*'  2> /dev/null -exec basename {} \;) <(find -L /sys/class/thermal -maxdepth 2 -name 'type' -path '*zone*'  2> /dev/null -exec cat {} \;) <(find -L /sys/class/thermal -maxdepth 2 -name 'temp' -path '*zone*'  2> /dev/null -exec awk -v d=1000 '{print (\$1/d)\\\"°C\\\"}'g {} \;) | column -s $'\t' -t\"")
                 print("Pick a thermal zone number to monitor [0-N]: ", end="")
                 user = input()
                 if user == "":
-                    user = "0"
+                    user = default
                     print(user)
                 thermal_zone_number = int(user)
             else:
