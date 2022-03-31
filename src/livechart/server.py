@@ -3,22 +3,38 @@
 import asyncio
 import time
 import json
+import struct
+import random
+from enum import Enum, auto
+
+from numpy import dtype
 
 # from .lib import Datagetter
 
 
 # import struct
+class DType(Enum):
+    RANDOM = auto()
+    THERMAL = auto()
 
 
 class LiveServer(object):
+    host = "0.0.0.0"
     default_port = 58741
     srv = None
-    clients = []
+    clients = {}
     t0 = None
+    dtype = DType.RANDOM
+    zone_num = 0
+    live_clients = asyncio.Event()
+    delay = 0.001
 
-    def __init__(self, host="0.0.0.0", port=default_port):
+    def __init__(self, host=host, port=default_port, data_type=dtype, thermal_zone=zone_num, artificial_delay=delay):
         self.host = host
         self.port = port
+        self.dtype = data_type
+        self.zone_num = thermal_zone
+        self.delay = artificial_delay
         # self.srv = await asyncio.start_server(self.client_connected_cb, host=host, port=port, reuse_address=True)
         # self.srv = socketserver.TCPServer(server_address, socketserver.StreamRequestHandler, bind_and_activate=False)
         # self.srv.timeout = None  # never time out
@@ -42,6 +58,9 @@ class LiveServer(object):
 
     async def client_connected_cb(self, reader, writer):
         pn = writer.get_extra_info("peername")
+        self.clients[pn] = (reader, writer, asyncio.Queue())
+        self.live_clients.set()
+        task = asyncio.create_task(self.do_feeding(self.clients[pn][2], writer))
         print(f"New client = {pn}")
         while True:
             try:
@@ -60,9 +79,33 @@ class LiveServer(object):
                     print(f"I got {cmd} from {pn}")
                 else:
                     break
+        if len(self.clients) == 0:
+            self.live_clients.clear()
         writer.close()
+        await task
         await writer.wait_closed()
+        del self.clients[pn]
         print(f"Goodbye to {pn}")
+
+    async def datasource(self):
+        while await self.live_clients.wait():
+            if self.dtype == DType.RANDOM:
+                value = random.random()
+                await asyncio.sleep(self.delay)
+            elif self.dtype == DType.THERMAL:
+                value = random.random() * 10
+                await asyncio.sleep(self.delay)
+            else:
+                value = 0
+                await asyncio.sleep(self.delay)
+            for pn, (reader, writer, q) in self.clients.items():
+                if not writer.is_closing():
+                    q.put_nowait(value)
+
+    async def do_feeding(self, q: asyncio.Queue, writer: asyncio.StreamWriter):
+        while not writer.is_closing():
+            writer.write(struct.pack("f", await q.get()))
+            await writer.drain()
 
     # def accept(self, sock):
     #    conn, addr = sock.accept()  # accept a connection
@@ -84,7 +127,7 @@ class LiveServer(object):
     #        conn.close()
     #    return (conn, data)
 
-    async def run(self, timeout=float("inf"), dtype="thermal", zone=7):
+    async def run(self):
         async with self.srv:
             await self.srv.serve_forever()
 
@@ -136,7 +179,7 @@ class LiveServer(object):
 
 async def amain():
     async with LiveServer() as ls:
-        await ls.run()
+        await asyncio.gather([ls.run, ls.datasource])
 
 
 def main():
