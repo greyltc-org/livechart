@@ -1,55 +1,95 @@
 #!/usr/bin/env python3
 
-import socketserver
-import selectors
+import asyncio
 import time
-from .lib import Datagetter
 import json
+
+# from .lib import Datagetter
+
 
 # import struct
 
 
 class LiveServer(object):
-    sel = selectors.DefaultSelector()  # global selector
     default_port = 58741
     srv = None
     clients = []
     t0 = None
 
-    def __init__(self, server_address=("0.0.0.0", default_port)):
-        self.srv = socketserver.TCPServer(server_address, socketserver.StreamRequestHandler, bind_and_activate=False)
-        self.srv.timeout = None  # never time out
-        self.srv.allow_reuse_address = True
+    def __init__(self, host="0.0.0.0", port=default_port):
+        self.host = host
+        self.port = port
+        # self.srv = await asyncio.start_server(self.client_connected_cb, host=host, port=port, reuse_address=True)
+        # self.srv = socketserver.TCPServer(server_address, socketserver.StreamRequestHandler, bind_and_activate=False)
+        # self.srv.timeout = None  # never time out
+        # self.srv.allow_reuse_address = True
         self.t0 = time.time()
 
-    def connect(self):
-        print(f"Listening for clients on {self.srv.server_address}")
-        self.srv.server_bind()
-        self.srv.server_activate()
-        self.sel.register(self.srv.socket, selectors.EVENT_READ, self.accept)
+    async def __aenter__(self):
+        self.srv = await asyncio.start_server(self.client_connected_cb, host=self.host, port=self.port, reuse_address=True)
+        print(f"Listening for clients on {(self.host, self.port)}")
+        # self.srv.server_bind()
+        # self.srv.server_activate()
+        # self.sel.register(self.srv.socket, selectors.EVENT_READ, self.accept)
+        return self
 
-    def accept(self, sock):
-        conn, addr = sock.accept()  # accept a connection
-        print(f"Accepted new connection: {conn} from ip {addr}")
-        # conn.setblocking(False)
-        self.sel.register(conn, selectors.EVENT_READ, self.get_data)
-        return (conn,)
+    async def __aexit__(self, exc_type, exc_value, traceback):
+        self.srv.close()
+        await self.srv.wait_closed()
+        # for r, w in self.clients:
+        #    w.close()
+        #    await w.wait_closed()
 
-    def get_data(self, conn):
-        try:
-            data = conn.recv(1024)
-        except Exception as e:
-            data = None
-        if data:
-            pass
-        else:  # must be a disconnect
-            print("closing", conn)
-            self.sel.unregister(conn)
-            conn.close()
-        return (conn, data)
+    async def client_connected_cb(self, reader, writer):
+        pn = writer.get_extra_info("peername")
+        print(f"New client = {pn}")
+        while True:
+            try:
+                len_msg = await reader.readuntil(b"{")
+            except asyncio.exceptions.IncompleteReadError:
+                break
+            try:
+                msg_len = int(len_msg.decode()[:-1])
+            except Exception as e:
+                print("Stream parse error")
+            else:
+                the_rest = await reader.read(msg_len)
+                if the_rest:
+                    msg = "{" + the_rest.decode()
+                    cmd = json.loads(msg)
+                    print(f"I got {cmd} from {pn}")
+                else:
+                    break
+        writer.close()
+        await writer.wait_closed()
+        print(f"Goodbye to {pn}")
 
-    def run(self, timeout=float("inf"), dtype="thermal", zone=8):
-        with Datagetter(dtype=dtype, zone=zone) as dg:
+    # def accept(self, sock):
+    #    conn, addr = sock.accept()  # accept a connection
+    #    print(f"Accepted new connection: {conn} from ip {addr}")
+    #    # conn.setblocking(False)
+    #    self.sel.register(conn, selectors.EVENT_READ, self.get_data)
+    #    return (conn,)
+
+    # def get_data(self, conn):
+    #    try:
+    #        data = conn.recv(1024)
+    #    except Exception as e:
+    #        data = None
+    #    if data:
+    #        pass
+    #    else:  # must be a disconnect
+    #        print("closing", conn)
+    #        self.sel.unregister(conn)
+    #        conn.close()
+    #    return (conn, data)
+
+    async def run(self, timeout=float("inf"), dtype="thermal", zone=7):
+        async with self.srv:
+            await self.srv.serve_forever()
+
+
+"""         with Datagetter(dtype=dtype, zone=zone) as dg:
             self.sel.register(dg.socket, selectors.EVENT_READ, self.get_data)
             while (time.time() - self.t0) < timeout:
                 events = self.sel.select(timeout=0.5)  # timeout is how often to check for timed exit
@@ -91,16 +131,16 @@ class LiveServer(object):
                                     try:
                                         c.send(data)  # relay the data to all clients
                                     except Exception as e:
-                                        pass  # best effort
+                                        pass  # best effort """
 
-    def serve(self):
-        self.connect()
-        self.run()
+
+async def amain():
+    async with LiveServer() as ls:
+        await ls.run()
 
 
 def main():
-    ls = LiveServer()
-    ls.serve()
+    asyncio.run(amain())
 
 
 if __name__ == "__main__":

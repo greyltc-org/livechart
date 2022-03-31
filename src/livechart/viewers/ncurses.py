@@ -66,7 +66,8 @@ class Interface(object):
 
     async def synchy(self, lds, lstdscr, lcache, awinlen, lcum_sum, ldisp, lquitkey, ph, tzn, datatype, delay):
         reader, writer = await asyncio.open_connection("127.0.0.1", 58741)
-        writer.write(json.dumps({"dtype": datatype, "zone": tzn, "delay": delay, "thermaltype": 0}).encode())
+        msg = json.dumps({"dtype": datatype, "zone": tzn, "delay": delay, "thermaltype": 0}).encode()
+        writer.write(f"{len(msg)}".encode() + msg)
         thermaltype_response = await reader.readline()
         tmp_type = thermaltype_response.decode().strip()
         t0 = time.time()
