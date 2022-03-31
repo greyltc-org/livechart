@@ -56,8 +56,9 @@ class LiveServer(object):
         #    w.close()
         #    await w.wait_closed()
 
-    async def client_connected_cb(self, reader, writer):
+    async def client_connected_cb(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
         pn = writer.get_extra_info("peername")
+        writer.write(f"johnboy\n".encode())
         self.clients[pn] = (reader, writer, asyncio.Queue())
         self.live_clients.set()
         task = asyncio.create_task(self.do_feeding(self.clients[pn][2], writer))
@@ -66,6 +67,9 @@ class LiveServer(object):
             try:
                 len_msg = await reader.readuntil(b"{")
             except asyncio.exceptions.IncompleteReadError:
+                break
+            except Exception as e:
+                print(f"Unhandled exception: {e}")
                 break
             try:
                 msg_len = int(len_msg.decode()[:-1])
@@ -79,7 +83,7 @@ class LiveServer(object):
                     print(f"I got {cmd} from {pn}")
                 else:
                     break
-        if len(self.clients) == 0:
+        if len(self.clients) == 1:
             self.live_clients.clear()
         writer.close()
         await task
@@ -179,7 +183,7 @@ class LiveServer(object):
 
 async def amain():
     async with LiveServer() as ls:
-        await asyncio.gather([ls.run, ls.datasource])
+        await asyncio.gather(ls.run(), ls.datasource())
 
 
 def main():
