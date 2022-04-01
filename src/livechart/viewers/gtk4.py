@@ -1,3 +1,4 @@
+from attr import has
 import gi
 
 gi.require_version("Gtk", "4.0")
@@ -198,11 +199,16 @@ class Interface(object):
     def on_connect(self, socket_client, result):
         try:
             conn = socket_client.connect_to_host_finish(result)
+            conn.props.graceful_disconnect = True
             conn.props.socket.set_timeout(1)
             conn.props.input_stream.read_bytes_async(4, GLib.PRIORITY_DEFAULT, None, self.handle_data)
             self.conn = conn
         except Exception as e:
-            toast = Adw.Toast.new(e.message)
+            if hasattr(e, "message"):
+                toast_text = e.message
+            else:
+                toast_text = f"{e}"
+            toast = Adw.Toast.new(toast_text)
             toast.props.timeout = 1
             self.tol.add_toast(toast)
 
@@ -218,17 +224,34 @@ class Interface(object):
         self.close_conn()
 
     def close_conn(self):
-        try:
-            self.conn.close_async(GLib.PRIORITY_DEFAULT, None, self.handle_close)
-        except Exception as e:
-            pass
+        if hasattr(self, "conn"):
+            try:
+                self.conn.close_async(GLib.PRIORITY_DEFAULT, None, self.handle_close)
+            except Exception as e:
+                pass
+        else:
+            toast = Adw.Toast.new("Not connected.")
+            toast.props.timeout = 1
+            self.tol.add_toast(toast)
 
     def handle_close(self, io_stream, result):
-        success = io_stream.close_finish(result)
-        if success:
-            toast = Adw.Toast.new("Connection closed.")
-        else:
-            toast = Adw.Toast.new("Connection not closed.")
+        print(f"Handling close event: {result}")
+        try:
+            success = io_stream.close_finish(result)
+            print("Win")
+            if success:
+                toast_text = "Connection closed."
+                del self.conn
+            else:
+                toast_text = "Connection not closed."
+            print(f"Win {toast_text}")
+        except Exception as e:
+            if hasattr(e, "message"):
+                toast_text = f"Problem closing connection: {e.message}"
+            else:
+                toast_text = f"Problem closing connection: {e}"
+            print(f"Fail {toast_text}")
+        toast = Adw.Toast.new(toast_text)
         toast.props.timeout = 1
         self.tol.add_toast(toast)
 

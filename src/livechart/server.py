@@ -61,7 +61,7 @@ class LiveServer(object):
         writer.write(f"johnboy\n".encode())
         self.clients[pn] = (reader, writer, asyncio.Queue())
         self.live_clients.set()
-        task = asyncio.create_task(self.do_feeding(self.clients[pn][2], writer))
+        feeder = asyncio.create_task(self.do_feeding(*self.clients[pn]))
         print(f"New client = {pn}")
         while True:
             try:
@@ -69,25 +69,36 @@ class LiveServer(object):
             except asyncio.exceptions.IncompleteReadError:
                 break
             except Exception as e:
-                print(f"Unhandled exception: {e}")
+                print(f"Handled exception A: {e}")
                 break
             try:
                 msg_len = int(len_msg.decode()[:-1])
             except Exception as e:
-                print("Stream parse error")
+                print("Stream parse error. Resyncing...")
             else:
-                the_rest = await reader.read(msg_len)
-                if the_rest:
+                try:
+                    the_rest = await reader.read(msg_len)
+                except asyncio.exceptions.IncompleteReadError:
+                    break
+                except Exception as e:
+                    print(f"Handled exception B: {e}")
+                    break
+                else:
                     msg = "{" + the_rest.decode()
                     cmd = json.loads(msg)
                     print(f"I got {cmd} from {pn}")
-                else:
-                    break
+        try:
+            await asyncio.wait_for(feeder, timeout=0.5)
+        except:
+            print("Feeder termination timeout")
+        if not feeder.done():
+            feeder.cancel()
+        try:
+            await feeder
+        except asyncio.CancelledError:
+            print("Had to cancel feeder")
         if len(self.clients) == 1:
             self.live_clients.clear()
-        writer.close()
-        await task
-        await writer.wait_closed()
         del self.clients[pn]
         print(f"Goodbye to {pn}")
 
@@ -106,10 +117,19 @@ class LiveServer(object):
                 if not writer.is_closing():
                     q.put_nowait(value)
 
-    async def do_feeding(self, q: asyncio.Queue, writer: asyncio.StreamWriter):
-        while not writer.is_closing():
-            writer.write(struct.pack("f", await q.get()))
-            await writer.drain()
+    async def do_feeding(self, reader: asyncio.StreamWriter, writer: asyncio.StreamReader, q: asyncio.Queue):
+        while not reader.at_eof():
+            q_item = await q.get()
+            try:
+                writer.write(struct.pack("f", q_item))
+                await writer.drain()
+            except Exception as e:
+                print(f"Write exception: {e}")
+        try:
+            writer.close()
+            await writer.wait_closed()
+        except Exception as e:
+            print(f"Writer close exception: {e}")
 
     # def accept(self, sock):
     #    conn, addr = sock.accept()  # accept a connection
