@@ -131,7 +131,7 @@ class Interface(object):
                 dat = struct.unpack("f", vraw.unref_to_data())[0]
                 input_stream.read_bytes_async(self.float_size, GLib.PRIORITY_DEFAULT, None, self.handle_data)
             except Exception as e:
-                toast = Adw.Toast.new("Closing connection because of data reception failure: {e}")
+                toast = Adw.Toast.new(f"Closing connection because of data reception failure: {e}")
                 toast.props.timeout = 3
                 self.tol.add_toast(toast)
                 self.close_conn()
