@@ -58,7 +58,6 @@ class LiveServer(object):
 
     async def client_connected_cb(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
         pn = writer.get_extra_info("peername")
-        writer.write(f"johnboy\n".encode())
         self.clients[pn] = (reader, writer, asyncio.Queue())
         self.live_clients.set()
         feeder = asyncio.create_task(self.do_feeding(*self.clients[pn]))
@@ -86,6 +85,8 @@ class LiveServer(object):
                 else:
                     msg = "{" + the_rest.decode()
                     cmd = json.loads(msg)
+                    if "thermaltype" in cmd:
+                        writer.write(f"some_zone\n".encode())  # TODO: use right zone
                     print(f"I got {cmd} from {pn}")
         try:
             await asyncio.wait_for(feeder, timeout=0.5)

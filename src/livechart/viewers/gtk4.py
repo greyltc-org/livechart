@@ -30,6 +30,7 @@ class Interface(object):
     max_data_length = 500  # can be None for unbounded
     data = collections.deque([(float("nan"), float("nan"))], max_data_length)
     t0 = 0
+    closing = False
 
     def __init__(self):
         try:
@@ -51,6 +52,7 @@ class Interface(object):
 
         self.t0 = time.time()
         self.s = Gio.SocketClient.new()
+        self.float_size = struct.calcsize("f")
 
     def on_app_activate(self, app):
         win = self.app.props.active_window
@@ -102,10 +104,8 @@ class Interface(object):
             self.ax.autoscale(enable=True, axis="y", tight=False)
             self.ax.set_xlabel("Time [s]")
             self.ax.set_ylabel("Value")
-
-        (self.line,) = self.ax.plot(*zip(*self.data), "go")
-
-        self.app.set_accels_for_action("win.show-help-overlay", ["<Control>question"])
+            (self.line,) = self.ax.plot(*zip(*self.data), "go")
+            self.app.set_accels_for_action("win.show-help-overlay", ["<Control>question"])
 
         win.present()
 
@@ -125,12 +125,15 @@ class Interface(object):
             self.some_widgets["val"].props.label = f"Value={self.data[0][1]:.3f}"
 
     def handle_data(self, input_stream, result):
-        if not input_stream.props.socket.is_closed():
+        if (not input_stream.props.socket.is_closed()) and (not self.closing):
             try:
                 vraw = input_stream.read_bytes_finish(result)
                 dat = struct.unpack("f", vraw.unref_to_data())[0]
-                input_stream.read_bytes_async(4, GLib.PRIORITY_DEFAULT, None, self.handle_data)
+                input_stream.read_bytes_async(self.float_size, GLib.PRIORITY_DEFAULT, None, self.handle_data)
             except Exception as e:
+                toast = Adw.Toast.new("Closing connection because of data reception failure: {e}")
+                toast.props.timeout = 3
+                self.tol.add_toast(toast)
                 self.close_conn()
             else:
                 self.data.appendleft((time.time() - self.t0, dat))
@@ -201,7 +204,7 @@ class Interface(object):
             conn = socket_client.connect_to_host_finish(result)
             conn.props.graceful_disconnect = True
             conn.props.socket.set_timeout(1)
-            conn.props.input_stream.read_bytes_async(4, GLib.PRIORITY_DEFAULT, None, self.handle_data)
+            conn.props.input_stream.read_bytes_async(self.float_size, GLib.PRIORITY_DEFAULT, None, self.handle_data)
             self.conn = conn
         except Exception as e:
             if hasattr(e, "message"):
@@ -209,13 +212,13 @@ class Interface(object):
             else:
                 toast_text = f"{e}"
             toast = Adw.Toast.new(toast_text)
-            toast.props.timeout = 1
+            toast.props.timeout = 3
             self.tol.add_toast(toast)
 
     def on_conn_btn_clicked(self, widget):
         if hasattr(self, "conn") and (not self.conn.props.closed):
             toast = Adw.Toast.new("Already connected!")
-            toast.props.timeout = 1
+            toast.props.timeout = 3
             self.tol.add_toast(toast)
         else:
             self.s.connect_to_host_async(self.backend_server, self.backend_server_port, None, self.on_connect)
@@ -226,33 +229,31 @@ class Interface(object):
     def close_conn(self):
         if hasattr(self, "conn"):
             try:
+                self.closing = True
                 self.conn.close_async(GLib.PRIORITY_DEFAULT, None, self.handle_close)
             except Exception as e:
                 pass
         else:
             toast = Adw.Toast.new("Not connected.")
-            toast.props.timeout = 1
+            toast.props.timeout = 3
             self.tol.add_toast(toast)
 
     def handle_close(self, io_stream, result):
-        print(f"Handling close event: {result}")
+        self.closing = False
         try:
             success = io_stream.close_finish(result)
-            print("Win")
             if success:
                 toast_text = "Connection closed."
                 del self.conn
             else:
                 toast_text = "Connection not closed."
-            print(f"Win {toast_text}")
         except Exception as e:
             if hasattr(e, "message"):
                 toast_text = f"Problem closing connection: {e.message}"
             else:
                 toast_text = f"Problem closing connection: {e}"
-            print(f"Fail {toast_text}")
         toast = Adw.Toast.new(toast_text)
-        toast.props.timeout = 1
+        toast.props.timeout = 3
         self.tol.add_toast(toast)
 
     def on_app_shutdown(self, app):
