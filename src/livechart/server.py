@@ -26,7 +26,7 @@ class LiveServer(object):
     t0 = None
     dtype = DType.RANDOM
     zone_num = 0
-    live_clients = asyncio.Event()
+    live_clients = asyncio.Event()  # set when there is at least one connected client
     delay = 0.001
 
     def __init__(self, host=host, port=default_port, data_type=dtype, thermal_zone=zone_num, artificial_delay=delay):
