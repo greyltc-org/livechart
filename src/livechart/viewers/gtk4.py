@@ -27,7 +27,7 @@ class Interface(object):
     backend_server = "localhost"
     backend_server_port = 58741
     some_widgets = {}
-    max_data_length = 500  # can be None for unbounded
+    max_data_length = None  # can be None for unbounded
     data = collections.deque([(float("nan"), float("nan"))], max_data_length)
     t0 = 0
     closing = False
