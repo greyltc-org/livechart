@@ -44,8 +44,8 @@ changelog = "https://github.com/greyltc-org/livechart/blob/master/CHANGELOG.md"
 [project.scripts]
 livechart-cli = "livechart.viewers.ncurses:main"
 livechart-srv = "livechart.server:main"
-livechart-dbb = "livechart.db:main"
-livechart-dbf = "livechart.db:main2"
+livechart-dbb = "livechart.db:mainb"
+livechart-dbf = "livechart.db:mainf"
 
 [project.gui-scripts]
 livechart = "livechart.viewers.gtk4:main"

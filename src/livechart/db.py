@@ -143,7 +143,7 @@ class DBTool(object):
         print("run complete!")
 
     async def run_frontend(self):
-        self.listen_channels.append(self.tbl_name + "_chunks")
+        self.listen_channels.append(f"{self.tbl_name}_events")
         aconn = await psycopg.AsyncConnection.connect(conninfo=self.db_uri, autocommit=True)
         async with aconn:
             async with aconn.cursor() as acur:
@@ -168,104 +168,91 @@ class DBTool(object):
                 first_row = (await cur.fetchone())[0]
                 first_loop = False
                 print(f"{first_row=}")
-                await cur.execute(f"INSERT INTO {self.tbl_name}_chunks(start_id) VALUES (%(start_id)s) RETURNING id", {"start_id": first_row})
+                await cur.execute(f"INSERT INTO {self.tbl_name}_events(start_id) VALUES (%(start_id)s) RETURNING id", {"start_id": first_row})
                 this_chunk_id = (await cur.fetchone())[0]
             await conn.commit()
         last_row = (await cur.fetchone())[0]
         print(f"{last_row=}")
-        await cur.execute(f"UPDATE {self.tbl_name}_chunks SET end_id = %(end_id)s WHERE id = %(id)s", {"id": this_chunk_id, "end_id": last_row})
+        await cur.execute(f"UPDATE {self.tbl_name}_events SET end_id = %(end_id)s WHERE id = %(id)s", {"id": this_chunk_id, "end_id": last_row})
 
     async def setup_data_table(self, conn: psycopg.AsyncConnection, cur: psycopg.AsyncCursor, recreate_tables: bool = False):
         if recreate_tables:
             # drop and creation order matters because of intertable refs (could probably just use CASCADE)
-            await cur.execute(f"DROP TABLE IF EXISTS {self.tbl_name}_chunks")
+            await cur.execute(f"DROP TABLE IF EXISTS {self.tbl_name}_events")
             await cur.execute(f"DROP TABLE IF EXISTS {self.tbl_name}")
             await cur.execute(f"CREATE TABLE {self.tbl_name} (id bigserial PRIMARY KEY, ts timestamptz, val real)")
-            await cur.execute(f"CREATE TABLE {self.tbl_name}_chunks (id serial PRIMARY KEY, start_id bigint, end_id bigint)")
-            await cur.execute(f'ALTER TABLE "{self.tbl_name}_chunks" ADD FOREIGN KEY ("start_id") REFERENCES "{self.tbl_name}" ("id");')
-            await cur.execute(f'ALTER TABLE "{self.tbl_name}_chunks" ADD FOREIGN KEY ("end_id") REFERENCES "{self.tbl_name}" ("id");')
+            await cur.execute(f"CREATE TABLE {self.tbl_name}_events (id serial PRIMARY KEY, start_id bigint, end_id bigint)")
+            await cur.execute(f'ALTER TABLE "{self.tbl_name}_events" ADD FOREIGN KEY ("start_id") REFERENCES "{self.tbl_name}" ("id");')
+            await cur.execute(f'ALTER TABLE "{self.tbl_name}_events" ADD FOREIGN KEY ("end_id") REFERENCES "{self.tbl_name}" ("id");')
 
         # (re)setup trigger & function, orders matter because of function/trigger dependance
-        await cur.execute(f"DROP TRIGGER IF EXISTS {self.tbl_name}_chunks_changed ON {self.tbl_name}_chunks")
+        await cur.execute(f"DROP TRIGGER IF EXISTS {self.tbl_name}_events_changed ON {self.tbl_name}_events")
+        await cur.execute(f"DROP TRIGGER IF EXISTS {self.tbl_name}_changed ON {self.tbl_name}")
+
         await cur.execute(f"DROP FUNCTION IF EXISTS notify_of_change_verbose()")
         await cur.execute(f"DROP FUNCTION IF EXISTS notify_of_change()")
         await cur.execute(f"CREATE FUNCTION notify_of_change_verbose() RETURNS TRIGGER AS $$ BEGIN PERFORM pg_notify(TG_ARGV[0], NEW::text); RETURN NULL; END; $$ LANGUAGE plpgsql;")
-        await cur.execute(f"CREATE FUNCTION notify_of_change() RETURNS TRIGGER AS $$ BEGIN PERFORM pg_notify(TG_ARGV[0], '('||NEW.id::text||')'); RETURN NULL; END; $$ LANGUAGE plpgsql;")
-        await cur.execute(f"CREATE TRIGGER {self.tbl_name}_chunks_changed AFTER INSERT OR UPDATE ON {self.tbl_name}_chunks FOR EACH ROW EXECUTE FUNCTION notify_of_change_verbose ('{self.tbl_name}_chunks')")
+        await cur.execute(f"CREATE FUNCTION notify_of_change() RETURNS TRIGGER AS $$ BEGIN PERFORM pg_notify(TG_ARGV[0], NEW.id::text); RETURN NULL; END; $$ LANGUAGE plpgsql;")
 
+        await cur.execute(f"CREATE TRIGGER {self.tbl_name}_events_changed AFTER INSERT OR UPDATE ON {self.tbl_name}_events FOR EACH ROW EXECUTE FUNCTION notify_of_change_verbose ('{self.tbl_name}_events')")
+        await cur.execute(f"CREATE TRIGGER {self.tbl_name}_changed AFTER INSERT OR UPDATE ON {self.tbl_name} FOR EACH ROW EXECUTE FUNCTION notify_of_change ('{self.tbl_name}')")
         await conn.commit()
         print("Setup complete!")
 
     async def do_listening(self, conn: psycopg.AsyncConnection, cur: psycopg.AsyncCursor):
         # register listeners
         await asyncio.gather(*[cur.execute(f"LISTEN {ch}") for ch in self.listen_channels])
+        await conn.commit()
         gen = conn.notifies()
-        some_task = None
+        expecting = 0
+        last_one = float("inf")
+        # some_task = None
         async for notify in gen:
-            print(notify)
+            # print(notify)
             if notify.payload == "stop":
                 break
             else:
-                vals = [int(x) for x in notify.payload.strip("(),").split(",")]
-                if len(vals) == 1:  # non-verbose modification event
-                    pass  # TODO: handle non-verbose notification, by fetching the row and inspecting it, then redefine vals to be 2 or three items long
-                if len(vals) == 2:  # verbose start event
-                    if hasattr(some_task, "done"):
-                        if not some_task.done():
-                            some_task.cancel()
-                            try:
-                                await some_task
-                            except asyncio.CancelledError:
-                                pass  # good, we can
-                            except Exception as e:
-                                pass  # whatever, probably some_task was None, anyway, it's cancelled
-                    sub_cursor = conn.cursor()
-                    # some_task = asyncio.create_task(self.print_new_data_rows(conn, sub_cursor, vals[1], notify.channel.rstrip("_chunks")))
-                    await self.print_new_data_rows(conn, sub_cursor, vals[1], notify.channel.rstrip("_chunks"))
-                    # await sub_cursor.close()
-                    print(some_task)
-                elif len(vals) == 3:  # verbose stop event
-                    if hasattr(some_task, "cancel"):
-                        some_task.cancel()
-                        try:
-                            await some_task
-                        except asyncio.CancelledError:
-                            pass  # good
-                        except Exception as e:
-                            pass  # whatever, probably some_task was None, anyway, it's cancelled
-        print("there, I stopped")
-
-    async def print_new_data_rows(self, conn: psycopg.AsyncConnection, cur: psycopg.AsyncCursor, start_id, table):
-        command = f"SELECT * FROM {table} WHERE ID >= %(start_id)s"
-        # data = {"start_id": start_id}
-        # await asyncio.sleep(2)
-        # await cur.execute(command, data)
-
-        while True:
-            data = {"start_id": start_id}
-            await cur.execute(command, data)
-            async for record in cur:
-                print(record)
-                start_id = start_id + 1
-                # data = {"start_id": start_id+1}
-            # rslt = await cur.fetchall()
-            # if rslt is not None:
-            #    print(rslt)
-
-        print("starting...")
-        async for record in cur:
-            print(record)
+                if notify.channel == self.tbl_name:  # raw data channel
+                    # data notification, non-verbose
+                    if expecting != 0:
+                        command = f"SELECT * FROM {self.tbl_name} WHERE id >= %(expecting)s"
+                        data = {"expecting": expecting}
+                        await cur.execute(command, data)
+                        async for record in cur:
+                            print(record)
+                            expecting = record[0] + 1  # we expect one more than the last we got
+                    else:
+                        print(f"got unexpected data notification: {notify}")
+                    if expecting > last_one:  # true when the block is complete
+                        expecting = 0
+                        last_one = float("inf")
+                        await cur.execute(f"UNLISTEN {notify.channel}")
+                        await conn.commit()
+                        print("last block")
+                elif notify.channel == f"{self.tbl_name}_events":
+                    # start/stop notification
+                    vals = [int(x) for x in notify.payload.strip("(),").split(",")]  # 0=this_id, 1=first_id, 2=last_id
+                    if len(vals) == 1:  # non-verbose modification event
+                        pass  # TODO: handle non-verbose notification: fetching the row and inspect it, then redefine vals to be 2 or three items long based on reading
+                    if len(vals) == 2:  # verbose start event
+                        print(f"run start: {notify}")
+                        await cur.execute(f"LISTEN {notify.channel.rstrip('_events')}")
+                        await conn.commit()
+                        expecting = vals[1]
+                    elif len(vals) == 3:  # verbose stop event
+                        print(f"run stop: {notify}")
+                        last_one = vals[2]
 
 
-def main0():
+def mainb():
     dbw = DBTool()
     asyncio.run(dbw.run_backend())
 
 
-def main():
+def mainf():
     dbw = DBTool()
     asyncio.run(dbw.run_frontend())
 
 
 if __name__ == "__main__":
-    main()
+    mainb()
