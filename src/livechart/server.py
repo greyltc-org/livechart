@@ -5,17 +5,19 @@ import time
 import json
 import struct
 import random
+import psycopg
 from enum import Enum, auto
 
 from numpy import dtype
 
-# from .lib import Datagetter
+from .db import DBTool
 
 
 # import struct
 class DType(Enum):
     RANDOM = auto()
     THERMAL = auto()
+    DB = auto()
 
 
 class LiveServer(object):
@@ -104,25 +106,42 @@ class LiveServer(object):
         print(f"Goodbye to {pn}")
 
     async def datasource(self):
-        while await self.live_clients.wait():
-            if self.dtype == DType.RANDOM:
-                value = random.random()
-                await asyncio.sleep(self.delay)
-            elif self.dtype == DType.THERMAL:
-                value = random.random() * 10
-                await asyncio.sleep(self.delay)
-            else:
-                value = 0
-                await asyncio.sleep(self.delay)
-            for pn, (reader, writer, q) in self.clients.items():
+        dbw = DBTool()
+        dbw.listen_channels.append(f"{dbw.tbl_name}_events")
+        aconn = await psycopg.AsyncConnection.connect(conninfo=dbw.db_uri, autocommit=True)
+        async with aconn:
+            async with aconn.cursor() as acur:
+                listener = asyncio.create_task(dbw.do_listening(aconn, acur))
+                while await self.live_clients.wait():  # runs forever
+                    if self.dtype == DType.DB:
+                        if dbw.outq.qsize() > 1:
+                            vals = [await dbw.outq.get() for x in range(dbw.outq.qsize())]
+                        else:
+                            vals = (await dbw.outq.get(),)
+                    elif self.dtype == DType.RANDOM:
+                        vals = (random.random(),)
+                        await asyncio.sleep(self.delay)
+                    elif self.dtype == DType.THERMAL:
+                        vals = (random.random() * 10,)
+                        await asyncio.sleep(self.delay)
+                    else:
+                        vals = (0,)
+                        await asyncio.sleep(self.delay)
+                    self.putter(vals)
+                await listener  # will never be reached
+
+    def putter(self, vals):
+        """distributes values to client queues"""
+        for pn, (reader, writer, q) in self.clients.items():
+            for v in vals:
                 if not writer.is_closing():
-                    q.put_nowait(value)
+                    q.put_nowait(v)
 
     async def do_feeding(self, reader: asyncio.StreamWriter, writer: asyncio.StreamReader, q: asyncio.Queue):
         while not reader.at_eof():
             q_item = await q.get()
             try:
-                writer.write(struct.pack("f", q_item))
+                writer.write(struct.pack("f", q_item[2]))
                 await writer.drain()
             except Exception as e:
                 print(f"Write exception: {e}")
@@ -203,7 +222,7 @@ class LiveServer(object):
 
 
 async def amain():
-    async with LiveServer() as ls:
+    async with LiveServer(data_type=DType.DB) as ls:
         await asyncio.gather(ls.run(), ls.datasource())
 
 

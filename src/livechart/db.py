@@ -127,12 +127,13 @@ class DBTool(object):
             else:
                 self.db_name = db_name
             self.db_uri = self.db_uri + f"/{self.db_name}"
+            self.outq = asyncio.Queue()
 
-    async def run_backend(self, timeout=5):
+    async def run_backend(self, timeout=5, fake_delay=0.001):
         aconn = await psycopg.AsyncConnection.connect(conninfo=self.db_uri, autocommit=True)
         async with aconn:
             async with aconn.cursor() as acur:
-                async with RandomSource(artificial_delay=0.001) as d_source:
+                async with RandomSource(artificial_delay=fake_delay) as d_source:
                     phase_one = []
                     # phase_one.append(self.do_listening(aconn, acur))
                     phase_one.append(self.setup_data_table(aconn, acur))
@@ -219,7 +220,8 @@ class DBTool(object):
                         data = {"expecting": expecting}
                         await cur.execute(command, data)
                         async for record in cur:
-                            print(record)
+                            self.outq.put_nowait(record)
+                            # print(record)
                             expecting = record[0] + 1  # we expect one more than the last we got
                     else:
                         print(f"got unexpected data notification: {notify}")
@@ -246,7 +248,7 @@ class DBTool(object):
 
 def mainb():
     dbw = DBTool()
-    asyncio.run(dbw.run_backend())
+    asyncio.run(dbw.run_backend(fake_delay=0.01))
 
 
 def mainf():
