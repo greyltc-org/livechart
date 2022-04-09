@@ -1,4 +1,3 @@
-from string import ascii_uppercase
 import psycopg
 import getpass
 import asyncio
@@ -174,7 +173,10 @@ class DBTool(object):
             await conn.commit()
         last_row = (await cur.fetchone())[0]
         print(f"{last_row=}")
-        await cur.execute(f"UPDATE {self.tbl_name}_events SET end_id = %(end_id)s WHERE id = %(id)s", {"id": this_chunk_id, "end_id": last_row})
+        command = f"UPDATE {self.tbl_name}_events SET end_id = %(end_id)s WHERE id = %(id)s"
+        data = {"id": this_chunk_id, "end_id": last_row}
+        await cur.execute(command, data)
+        await conn.commit()
 
     async def setup_data_table(self, conn: psycopg.AsyncConnection, cur: psycopg.AsyncCursor, recreate_tables: bool = False):
         if recreate_tables:
@@ -204,10 +206,22 @@ class DBTool(object):
         # register listeners
         await asyncio.gather(*[cur.execute(f"LISTEN {ch}") for ch in self.listen_channels])
         await conn.commit()
-        gen = conn.notifies()
-        expecting = 0
+
+        # we can now check for live running events and hook into them in real time
+        for tbl in self.listen_channels:
+            await cur.execute(f"SELECT start_id,end_id FROM {tbl} ORDER BY id DESC LIMIT 1")
+            latest_row = await cur.fetchone()
+            if latest_row[1] == None:
+                # we joined while insertions are ongoing
+                # so we should subscribe to it
+                await cur.execute(f"LISTEN {tbl.rstrip('_events')}")
+                await conn.commit()
+                expecting = latest_row[0]  # this causes a prefetch of the entire history of this event
+            else:
+                expecting = 0
+
         last_one = float("inf")
-        # some_task = None
+        gen = conn.notifies()
         async for notify in gen:
             # print(notify)
             if notify.payload == "stop":
@@ -230,19 +244,17 @@ class DBTool(object):
                         last_one = float("inf")
                         await cur.execute(f"UNLISTEN {notify.channel}")
                         await conn.commit()
-                        print("last block")
                 elif notify.channel == f"{self.tbl_name}_events":
                     # start/stop notification
                     vals = [int(x) for x in notify.payload.strip("(),").split(",")]  # 0=this_id, 1=first_id, 2=last_id
                     if len(vals) == 1:  # non-verbose modification event
                         pass  # TODO: handle non-verbose notification: fetching the row and inspect it, then redefine vals to be 2 or three items long based on reading
                     if len(vals) == 2:  # verbose start event
-                        print(f"run start: {notify}")
                         await cur.execute(f"LISTEN {notify.channel.rstrip('_events')}")
                         await conn.commit()
                         expecting = vals[1]
+                        last_one = float("inf")
                     elif len(vals) == 3:  # verbose stop event
-                        print(f"run stop: {notify}")
                         last_one = vals[2]
 
 
@@ -257,4 +269,4 @@ def mainf():
 
 
 if __name__ == "__main__":
-    mainb()
+    mainf()

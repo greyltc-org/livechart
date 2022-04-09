@@ -15,13 +15,13 @@
         <child type="start">
           <object class="GtkButton" id="conn_btn">
             <property name="icon-name">call-start</property>
-            <property name="tooltip-markup">Connect to backend</property>
+            <property name="tooltip-text">Connect to backend</property>
           </object>
         </child>
         <child type="start">
           <object class="GtkButton" id="dsc_btn">
             <property name="icon-name">call-stop</property>
-            <property name="tooltip-markup">Disconnect from backend</property>
+            <property name="tooltip-text">Disconnect from backend</property>
           </object>
         </child>
         <child type="start">

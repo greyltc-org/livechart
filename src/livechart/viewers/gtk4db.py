@@ -1,3 +1,5 @@
+from concurrent.futures import thread
+import queue
 import gi
 
 gi.require_version("Gtk", "4.0")
@@ -16,6 +18,7 @@ import struct
 from ..db import DBTool
 import psycopg
 import asyncio
+import threading
 
 
 class Interface(object):
@@ -28,6 +31,8 @@ class Interface(object):
     data = collections.deque([(float("nan"), float("nan"))], max_data_length)
     t0 = 0
     closing = False
+    async_loops = []
+    threads = []
 
     def __init__(self):
         try:
@@ -69,7 +74,9 @@ class Interface(object):
             else:
                 raise ValueError("Failed to import help overlay UI")
 
+            # collect widgets we'll need to reference later
             self.some_widgets["val"] = win_builder.get_object("val")
+            self.some_widgets["conn_btn"] = win_builder.get_object("conn_btn")
 
             win.set_application(app)
             win.set_help_overlay(help_overlay)
@@ -105,8 +112,9 @@ class Interface(object):
             (self.line,) = self.ax.plot(*zip(*self.data), "go")
             self.app.set_accels_for_action("win.show-help-overlay", ["<Control>question"])
 
-            self.task_canceller = Gio.Cancellable.new()
-            # self.task = Gio.Task.new(None, self.task_canceller, self.on_thread_finish)
+            # self.cq = asyncio.Queue()
+            # event to signal end of db connection
+            # self.terminate_db = threading.Event()
 
         win.present()
 
@@ -142,7 +150,8 @@ class Interface(object):
 
     def handle_db_data(self, vals):
         for v in vals:
-            self.data.appendleft((time.time() - self.t0, v[2]))
+            self.data.appendleft((v[1].timestamp() - self.t0, v[2]))
+            # self.data.appendleft((time.time() - self.t0, v[2]))
         self.update_val()
         self.new_plot()
         self.canvas.queue_draw()
@@ -205,92 +214,115 @@ class Interface(object):
                 self.backend_server_port = int(sbb_txt_split[1])
         prefs_dialog.destroy()
 
-    def on_thread_finish(self, a, b):
-        print(f"{a=}")
-        print(f"{b=}")
-        print("thread finish")
-        if hasattr(a, "get_cancellable"):
-            canceller = a.get_cancellable()
-        elif hasattr(b, "get_cancellable"):
-            canceller = b.get_cancellable()
-        else:
-            print("no cancelelr")
-            return
-        canceller.reset()
+    def thread_task_runner(self):
+        """gets run in a new thread"""
 
-    def thread_task_runner(self, task, b, c, canceller):
+        async def q_getter(q):
+            while True:
+                if q.qsize() > 1:
+                    vals = [await q.get() for x in range(q.qsize())]
+                else:
+                    vals = (await q.get(),)
+                GLib.idle_add(self.handle_db_data, vals)
+
         async def db_listener():
-            dbw = DBTool()
+            self.async_loops.append(asyncio.get_running_loop())
+            dbw = DBTool(db_name="grey")
             dbw.listen_channels.append(f"{dbw.tbl_name}_events")
-            aconn = await psycopg.AsyncConnection.connect(conninfo=dbw.db_uri, autocommit=True)
-            async with aconn:
-                async with aconn.cursor() as acur:
-                    listener = asyncio.create_task(dbw.do_listening(aconn, acur))
-                    print("made listener task")
-                    while not canceller.is_cancelled():
-                        if dbw.outq.qsize() > 1:
-                            vals = [await dbw.outq.get() for x in range(dbw.outq.qsize())]
-                        else:
-                            vals = (await dbw.outq.get(),)
-                        GLib.idle_add(self.handle_db_data, vals)
-                    print("while_ended")
-
-        async def inner_main():
-            async_task = asyncio.create_task(db_listener())
-            # async_task = asyncio.to_thread(db_listener())
-            canceller.connect(async_task.cancel)
+            aconn = None
             try:
-                await async_task
-            except asyncio.CancelledError:
-                pass
+                aconn = await asyncio.create_task(psycopg.AsyncConnection.connect(conninfo=dbw.db_uri, autocommit=True), name="connect")
+                await aconn.set_read_only(True)
+                toast_text = f"Connected to {dbw.db_uri}"
             except Exception as e:
-                print(e)
+                if hasattr(e, "message"):
+                    toast_text = f"Connection failure: {e.message}"
+                else:
+                    toast_text = f"Connection failure: {e}"
+            toast = Adw.Toast.new(toast_text)
+            toast.props.timeout = 3
+            self.tol.add_toast(toast)
 
-        asyncio.run(inner_main())
+            if hasattr(aconn, "closed") and (not aconn.closed):
+                async with aconn:
+                    async with aconn.cursor() as acur:
+                        q_task = asyncio.create_task(q_getter(dbw.outq), name="q")
+                        listen_task = asyncio.create_task(dbw.do_listening(aconn, acur), name="listen")
+
+                        try:
+                            await listen_task
+                        except asyncio.CancelledError:
+                            pass
+                        except Exception as e:
+                            print(e)
+
+                        try:
+                            await q_task
+                        except asyncio.CancelledError:
+                            pass
+                        except Exception as e:
+                            print(e)
+
+        asyncio.run(db_listener())
+        GLib.idle_add(self.cleanup_conn)
 
     def on_conn_btn_clicked(self, widget):
-        task = Gio.Task.new(None, self.task_canceller, self.on_thread_finish)
-        task.run_in_thread(self.thread_task_runner)
-        # self.task.set_return_on_cancel(True)
-        # print(f"{self.task.get_cancellable()=}")
-        # self.task.run_in_thread(self.thread_task_runner)
+        widget.props.sensitive = False
+        # TODO: switch from threading here to proper await/async when pygobject supports it
+        # see https://gitlab.gnome.org/GNOME/pygobject/-/merge_requests/189
+        t = threading.Thread(target=self.thread_task_runner)
+        t.daemon = False  # False might cause exit issues when problems arise
+        t.start()
+        self.threads.append(t)
 
     def on_dsc_btn_clicked(self, widget):
-        self.close_conn()
+        self.ask_async_loop_to_finish(fail_toast=True)
 
-    def close_conn(self):
-        self.task_canceller.cancel()
-        # if hasattr(self, "conn"):
-        #    try:
-        #        self.closing = True
-        #        self.conn.close_async(GLib.PRIORITY_DEFAULT, None, self.handle_close)
-        #    except Exception as e:
-        #        pass
-        # else:
-        #    toast = Adw.Toast.new("Not connected.")
-        #    toast.props.timeout = 3
-        #    self.tol.add_toast(toast)
+    def ask_async_loop_to_finish(self, fail_toast: bool = False):
+        signal_sent = False
+        for loop in self.async_loops:
+            if not loop.is_closed():
+                for task in asyncio.all_tasks(loop):
+                    if task.get_name() in ["connect", "q", "listen"]:
+                        signal_sent = True
+                        loop.call_soon_threadsafe(task.cancel)  # ask the things keeping the loop running to stop
 
-    def handle_close(self, io_stream, result):
-        self.closing = False
-        try:
-            success = io_stream.close_finish(result)
-            if success:
+        if (not signal_sent) and fail_toast:
+            toast = Adw.Toast.new("No connection to close.")
+            toast.props.timeout = 3
+            self.tol.add_toast(toast)
+
+    def cleanup_conn(self):
+        # clean up the async loop(s) and their thread(s)
+        # there should really only ever be one thread and one loop here in reality
+
+        self.ask_async_loop_to_finish(fail_toast=False)
+        toast_text = "No connection to close."
+
+        for thread in self.threads:
+            try:
+                thread.join(timeout=5)
                 toast_text = "Connection closed."
-                del self.conn
-            else:
-                toast_text = "Connection not closed."
-        except Exception as e:
-            if hasattr(e, "message"):
-                toast_text = f"Problem closing connection: {e.message}"
-            else:
-                toast_text = f"Problem closing connection: {e}"
+            except Exception as e:
+                print(e)
+            finally:
+                if thread.is_alive():
+                    toast_text = f"Failure joining thread: {thread}"
+
+        for i, thread in enumerate(self.threads):
+            del self.threads[i]
+
+        for i, loop in enumerate(self.async_loops):
+            del self.async_loops[i]
+
+        self.some_widgets["conn_btn"].props.sensitive = True
+
         toast = Adw.Toast.new(toast_text)
         toast.props.timeout = 3
         self.tol.add_toast(toast)
 
     def on_app_shutdown(self, app):
-        self.close_conn()
+        self.cleanup_conn()
 
     def get_ui_data(self):
         """load the ui files and return them as a dict of big strings"""
