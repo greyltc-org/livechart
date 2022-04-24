@@ -1,8 +1,9 @@
 [build-system]
 requires = [
-  "setuptools @ git+https://github.com/pypa/setuptools",
+  "setuptools @ git+https://github.com/pypa/setuptools#tag=v62.1.0",
   "wheel",
 ]
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "livechart"
