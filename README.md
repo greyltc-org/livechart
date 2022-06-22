@@ -29,5 +29,5 @@ PYTHONPATH="src" coverage run --source livechart -m unittest -v; coverage report
 ```
 ## Combo
 ```
-rm -rf someplace/; rm -rf dist/; python -m build --wheel; python -m installer --destdir="./someplace" dist/*.whl
+rm -rf someplace/; rm -rf dist/; python -m build --wheel --no-isolation; python -m installer --destdir="./someplace" dist/*.whl
 ```

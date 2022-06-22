@@ -1,3 +1,4 @@
+import json
 import psycopg
 import getpass
 import asyncio
@@ -93,6 +94,7 @@ class DBTool(object):
     db_uri = None
     listen_channels = []
     tbl_name = "tbl_time_data"
+    stop_relay: bool = False  # signal to stop relay
 
     def __init__(self, db_proto=db_proto, db_user=db_user, db_name=db_name, db_host=db_host, db_port=db_port, db_uri=db_uri):
 
@@ -126,7 +128,7 @@ class DBTool(object):
             else:
                 self.db_name = db_name
             self.db_uri = self.db_uri + f"/{self.db_name}"
-            self.outq = asyncio.Queue()
+        self.outq = asyncio.Queue()
 
     async def run_backend(self, timeout=5, fake_delay=0.001):
         aconn = await psycopg.AsyncConnection.connect(conninfo=self.db_uri, autocommit=True)
@@ -135,7 +137,7 @@ class DBTool(object):
                 async with RandomSource(artificial_delay=fake_delay) as d_source:
                     phase_one = []
                     # phase_one.append(self.do_listening(aconn, acur))
-                    phase_one.append(self.setup_data_table(aconn, acur))
+                    # phase_one.append(self.setup_data_table(aconn, acur))
                     await asyncio.gather(*phase_one)
                     phase_two = []
                     phase_two.append(self.add_data(aconn, acur, d_source, timeout=timeout))
@@ -143,12 +145,14 @@ class DBTool(object):
         print("run complete!")
 
     async def run_frontend(self):
-        self.listen_channels.append(f"{self.tbl_name}_events")
+        # self.listen_channels.append(f"{self.tbl_name}_events")
+        self.listen_channels.append(f"org_greyltc_raw.s71c9f7e")
         aconn = await psycopg.AsyncConnection.connect(conninfo=self.db_uri, autocommit=True)
         async with aconn:
             async with aconn.cursor() as acur:
                 phase_one = []
-                phase_one.append(self.do_listening(aconn, acur))
+                phase_one.append(self.new_listening(aconn, acur))
+                # phase_one.append(self.do_listening(aconn, acur))
                 await asyncio.gather(*phase_one)
 
     async def add_data(self, conn: psycopg.AsyncConnection, cur: psycopg.AsyncCursor, d_source: RandomSource, timeout: float = 0):
@@ -201,6 +205,24 @@ class DBTool(object):
         await cur.execute(f"CREATE TRIGGER {self.tbl_name}_changed AFTER INSERT OR UPDATE ON {self.tbl_name} FOR EACH ROW EXECUTE FUNCTION notify_of_change ('{self.tbl_name}')")
         await conn.commit()
         print("Setup complete!")
+
+    async def new_listening(self, conn: psycopg.AsyncConnection, cur: psycopg.AsyncCursor):
+
+        await asyncio.gather(*[cur.execute(f"LISTEN {ch}") for ch in self.listen_channels])
+        await conn.commit()
+
+        gen = conn.notifies()
+        async for notify in gen:
+            if self.stop_relay:
+                await asyncio.gather(*[cur.execute(f"UNLISTEN {ch}") for ch in self.listen_channels])
+                await conn.commit()
+                break
+            try:
+                jayson = json.loads(notify.payload)
+                jayson["channel"] = notify.channel
+                self.outq.put_nowait(jayson)
+            except:
+                print(f"Failed to parse payload")
 
     async def do_listening(self, conn: psycopg.AsyncConnection, cur: psycopg.AsyncCursor):
         # register listeners
@@ -264,7 +286,10 @@ def mainb():
 
 
 def mainf():
-    dbw = DBTool()
+    # dbw = DBTool(db_uri="postgresql://grey@10.45.0.216/labuser")
+    # dbw = DBTool(db_uri="postgresql://grey@10.56.0.4/labuser")
+    # dbw = DBTool(db_uri="postgresql://grey@10.56.0.4/labuser?options=-c%20search_path%3org_greyltc")
+    dbw = DBTool(db_uri="postgresql://grey@localhost/grey")
     asyncio.run(dbw.run_frontend())
 
 

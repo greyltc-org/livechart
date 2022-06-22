@@ -15,7 +15,7 @@ from matplotlib.backends.backend_cairo import FigureCanvasCairo, RendererCairo
 from matplotlib.figure import Figure
 import struct
 
-from ..db import DBTool
+from livechart.db import DBTool
 import psycopg
 import asyncio
 import threading
@@ -27,7 +27,7 @@ class Interface(object):
     backend_server = "localhost"
     backend_server_port = 58741
     some_widgets = {}
-    max_data_length = 700  # can be None for unbounded
+    max_data_length = 300  # can be None for unbounded
     data = collections.deque([(float("nan"), float("nan"))], max_data_length)
     t0 = 0
     closing = False
@@ -150,8 +150,28 @@ class Interface(object):
 
     def handle_db_data(self, vals):
         for v in vals:
-            self.data.appendleft((v[1].timestamp() - self.t0, v[2]))
-            # self.data.appendleft((time.time() - self.t0, v[2]))
+            if "raw" in v["channel"]:
+                # self.data.appendleft((v["t"], v["i"] * v["v"]))
+                self.data.appendleft((v["t"], v["v"]))
+            elif "runs" in v["channel"]:
+                run_msg = f"New Run by {v['user_id']}: {v['name']}"
+                toast = Adw.Toast.new(run_msg)
+                toast.props.timeout = 3
+                self.tol.add_toast(toast)
+                print(f"new run: ")
+            elif "events" in v["channel"]:
+                if v["complete"]:
+                    what = "done."
+                else:
+                    what = "started."
+                msg = f"{v['kind']} {what}"
+                toast = Adw.Toast.new(msg)
+                toast.props.timeout = 3
+                self.tol.add_toast(toast)
+                print(f"new run: ")
+
+                # self.data.appendleft((v[1].timestamp() - self.t0, v[2]))
+                # self.data.appendleft((time.time() - self.t0, v[2]))
         self.update_val()
         self.new_plot()
         self.canvas.queue_draw()
@@ -227,8 +247,14 @@ class Interface(object):
 
         async def db_listener():
             self.async_loops.append(asyncio.get_running_loop())
-            dbw = DBTool(db_name="grey")
-            dbw.listen_channels.append(f"{dbw.tbl_name}_events")
+            # dbw = DBTool(db_uri="postgresql://grey@10.56.0.4/labuser")
+            dbw = DBTool(db_uri="postgresql://")
+            listen_channels = []
+            listen_channels.append("org_greyltc_raw_s1738994")
+            listen_channels.append("org_greyltc_tbl_runs")
+            listen_channels.append("org_greyltc_tbl_events")
+            listen_channels.append("org_greyltc_raw_s71c9f7e")
+            dbw.listen_channels = listen_channels
             aconn = None
             try:
                 aconn = await asyncio.create_task(psycopg.AsyncConnection.connect(conninfo=dbw.db_uri, autocommit=True), name="connect")
@@ -247,7 +273,7 @@ class Interface(object):
                 async with aconn:
                     async with aconn.cursor() as acur:
                         q_task = asyncio.create_task(q_getter(dbw.outq), name="q")
-                        listen_task = asyncio.create_task(dbw.do_listening(aconn, acur), name="listen")
+                        listen_task = asyncio.create_task(dbw.new_listening(aconn, acur), name="listen")
 
                         try:
                             await listen_task
