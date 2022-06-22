@@ -156,7 +156,7 @@ class Interface(object):
             elif "runs" in v["channel"]:
                 run_msg = f"New Run by {v['user_id']}: {v['name']}"
                 toast = Adw.Toast.new(run_msg)
-                toast.props.timeout = 3
+                toast.props.timeout = 1
                 self.tol.add_toast(toast)
                 print(f"new run: ")
             elif "events" in v["channel"]:
@@ -166,9 +166,8 @@ class Interface(object):
                     what = "started."
                 msg = f"{v['kind']} {what}"
                 toast = Adw.Toast.new(msg)
-                toast.props.timeout = 3
+                toast.props.timeout = 1
                 self.tol.add_toast(toast)
-                print(f"new run: ")
 
                 # self.data.appendleft((v[1].timestamp() - self.t0, v[2]))
                 # self.data.appendleft((time.time() - self.t0, v[2]))
