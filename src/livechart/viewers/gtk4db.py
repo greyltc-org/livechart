@@ -24,10 +24,9 @@ import threading
 class Interface(object):
     app = None
     version = "0.0.0"
-    backend_server = "localhost"
-    backend_server_port = 58741
+    db_url = "postgresql://"
     some_widgets = {}
-    max_data_length = 300  # can be None for unbounded
+    max_data_length = 700  # can be None for unbounded
     data = collections.deque([(float("nan"), float("nan"))], max_data_length)
     t0 = 0
     closing = False
@@ -211,14 +210,14 @@ class Interface(object):
         pd_content.props.margin_start = 5
         pd_content.props.margin_end = 5
         pd_content.props.orientation = Gtk.Orientation.HORIZONTAL
-        lbl = Gtk.Label.new("<b>Backend Server: </b>")
+        lbl = Gtk.Label.new("<b>Datbase connection URL: </b>")
         lbl.props.use_markup = True
         pd_content.append(lbl)
         server_box = Gtk.Entry.new()
         sbb = server_box.get_buffer()
-        sbb.set_text(self.backend_server, -1)
+        sbb.set_text(self.db_url, -1)
         self.some_widgets["sbb"] = sbb
-        server_box.props.placeholder_text = "Server Hostname or IP"
+        server_box.props.placeholder_text = "postgresql://"
         server_box.props.activates_default = True
         pd_content.append(server_box)
         pd.connect("response", self.on_prefs_response)
@@ -226,11 +225,7 @@ class Interface(object):
 
     def on_prefs_response(self, prefs_dialog, response_code):
         if response_code == Gtk.ResponseType.OK:
-            sbb_txt = self.some_widgets["sbb"].props.text
-            sbb_txt_split = sbb_txt.split(":")
-            self.backend_server = sbb_txt_split[0]
-            if len(sbb_txt_split) > 1:
-                self.backend_server_port = int(sbb_txt_split[1])
+            self.db_url = self.some_widgets["sbb"].props.text
         prefs_dialog.destroy()
 
     def thread_task_runner(self):
@@ -246,10 +241,10 @@ class Interface(object):
 
         async def db_listener():
             self.async_loops.append(asyncio.get_running_loop())
-            # dbw = DBTool(db_uri="postgresql://grey@10.56.0.4/labuser")
-            dbw = DBTool(db_uri="postgresql://")
+            dbw = DBTool(db_uri="postgresql://grey@10.56.0.4/labuser")
+            # dbw = DBTool(db_uri="postgresql://")
             listen_channels = []
-            listen_channels.append("org_greyltc_raw_s1738994")
+            # listen_channels.append("org_greyltc_raw_s1738994")
             listen_channels.append("org_greyltc_tbl_runs")
             listen_channels.append("org_greyltc_tbl_events")
             listen_channels.append("org_greyltc_raw_s71c9f7e")
@@ -287,6 +282,9 @@ class Interface(object):
                             pass
                         except Exception as e:
                             print(e)
+
+                    await asyncio.gather(*[acur.execute(f"UNLISTEN {ch}") for ch in dbw.listen_channels])
+                    await aconn.commit()
 
         asyncio.run(db_listener())
         GLib.idle_add(self.cleanup_conn)

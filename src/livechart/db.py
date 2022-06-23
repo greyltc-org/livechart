@@ -145,15 +145,16 @@ class DBTool(object):
         print("run complete!")
 
     async def run_frontend(self):
-        # self.listen_channels.append(f"{self.tbl_name}_events")
-        self.listen_channels.append(f"org_greyltc_raw.s71c9f7e")
-        aconn = await psycopg.AsyncConnection.connect(conninfo=self.db_uri, autocommit=True)
-        async with aconn:
-            async with aconn.cursor() as acur:
-                phase_one = []
-                phase_one.append(self.new_listening(aconn, acur))
-                # phase_one.append(self.do_listening(aconn, acur))
-                await asyncio.gather(*phase_one)
+        if self.listen_channels != []:
+            aconn = await psycopg.AsyncConnection.connect(conninfo=self.db_uri, autocommit=True)
+            async with aconn:
+                async with aconn.cursor() as acur:
+                    phase_one = []
+                    phase_one.append(self.new_listening(aconn, acur))
+                    # phase_one.append(self.do_listening(aconn, acur))
+                    await asyncio.gather(*phase_one)
+        else:
+            print("No channels to listen to.")
 
     async def add_data(self, conn: psycopg.AsyncConnection, cur: psycopg.AsyncCursor, d_source: RandomSource, timeout: float = 0):
         print("adding new data")
@@ -207,22 +208,20 @@ class DBTool(object):
         print("Setup complete!")
 
     async def new_listening(self, conn: psycopg.AsyncConnection, cur: psycopg.AsyncCursor):
+        if self.listen_channels != []:
+            await asyncio.gather(*[cur.execute(f"LISTEN {ch}") for ch in self.listen_channels])
+            await conn.commit()
 
-        await asyncio.gather(*[cur.execute(f"LISTEN {ch}") for ch in self.listen_channels])
-        await conn.commit()
-
-        gen = conn.notifies()
-        async for notify in gen:
-            if self.stop_relay:
-                await asyncio.gather(*[cur.execute(f"UNLISTEN {ch}") for ch in self.listen_channels])
-                await conn.commit()
-                break
-            try:
-                jayson = json.loads(notify.payload)
-                jayson["channel"] = notify.channel
-                self.outq.put_nowait(jayson)
-            except:
-                print(f"Failed to parse payload")
+            gen = conn.notifies()
+            async for notify in gen:
+                try:
+                    jayson = json.loads(notify.payload)
+                    jayson["channel"] = notify.channel
+                    self.outq.put_nowait(jayson)
+                except:
+                    print(f"Failed to parse payload")
+        else:
+            print("No channels to listen to.")
 
     async def do_listening(self, conn: psycopg.AsyncConnection, cur: psycopg.AsyncCursor):
         # register listeners
