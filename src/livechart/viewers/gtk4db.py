@@ -32,6 +32,9 @@ class Interface(object):
     closing = False
     async_loops = []
     threads = []
+    channels: list[str] = []  # channels to listen to
+    all_channels: list[str] = ["no channels"]  # all possible channels
+    channel_list: Gtk.ListBox
 
     def __init__(self):
         try:
@@ -168,8 +171,6 @@ class Interface(object):
                 toast.props.timeout = 1
                 self.tol.add_toast(toast)
 
-                # self.data.appendleft((v[1].timestamp() - self.t0, v[2]))
-                # self.data.appendleft((time.time() - self.t0, v[2]))
         self.update_val()
         self.new_plot()
         self.canvas.queue_draw()
@@ -194,6 +195,41 @@ class Interface(object):
         self.ad.set_transient_for(win)
         self.ad.present()
 
+    def fetch_channels(self, button: Gtk.Button):
+        """update listen/notify channel list"""
+        query = "select event_object_schema, event_object_table from information_schema.triggers where event_manipulation = 'INSERT'"
+        fetched_channels = []
+        db_url = self.some_widgets["sbb"].props.text
+        try:
+            with psycopg.connect(db_url) as conn:
+                with conn.cursor() as cur:
+                    cur.execute(query)
+                    for record in cur:
+                        if len(record) == 2:
+                            fetched_channels.append(f"{record[0]}_{record[1]}")
+        except Exception as e:
+            print(f"Faulure to fetch channel list: {e}")
+        else:
+            if fetched_channels != []:
+                self.all_channels = fetched_channels
+                self.update_channel_list()
+
+        return None
+
+    def update_channel_list(self):
+        # clear the list
+        while True:
+            try:
+                self.channel_list.remove(self.channel_list.get_first_child())
+            except:
+                break
+
+        for chan in self.all_channels:
+            chan_row = Gtk.ListBoxRow()
+            label = Gtk.Label.new(chan)
+            chan_row.props.child = label
+            self.channel_list.append(chan_row)
+
     def on_preferences_action(self, widget, _):
         win = self.app.props.active_window
         # setup prefs dialog
@@ -209,23 +245,58 @@ class Interface(object):
         pd_content.props.margin_bottom = 5
         pd_content.props.margin_start = 5
         pd_content.props.margin_end = 5
-        pd_content.props.orientation = Gtk.Orientation.HORIZONTAL
+        # pd_content.props.orientation = Gtk.Orientation.HORIZONTAL
+
+        box_spacing = 5
+
+        outerbox = Gtk.Box.new(Gtk.Orientation.VERTICAL, box_spacing)
+        pd_content.append(outerbox)
+
+        urllinebox = Gtk.Box.new(Gtk.Orientation.HORIZONTAL, box_spacing)
         lbl = Gtk.Label.new("<b>Datbase connection URL: </b>")
         lbl.props.use_markup = True
-        pd_content.append(lbl)
+        urllinebox.append(lbl)
         server_box = Gtk.Entry.new()
         sbb = server_box.get_buffer()
         sbb.set_text(self.db_url, -1)
         self.some_widgets["sbb"] = sbb
         server_box.props.placeholder_text = "postgresql://"
         server_box.props.activates_default = True
-        pd_content.append(server_box)
+        urllinebox.append(server_box)
+        outerbox.append(urllinebox)
+
+        refresh_listen = Gtk.Box.new(Gtk.Orientation.HORIZONTAL, box_spacing)
+        lcb = Gtk.Button.new_with_label("(Re)Load listen channels")
+        lcb.props.hexpand = True
+        lcb.connect("clicked", self.fetch_channels)
+        refresh_listen.append(lcb)
+        outerbox.append(refresh_listen)
+
+        chanlinebox = Gtk.Box.new(Gtk.Orientation.HORIZONTAL, box_spacing)
+        chan_lbl = Gtk.Label.new("<b>Select Listen Channels: </b>")
+        chan_lbl.props.use_markup = True
+        chanlinebox.append(chan_lbl)
+        self.channel_list = Gtk.ListBox.new()
+        self.channel_list.props.selection_mode = Gtk.SelectionMode.MULTIPLE
+        self.channel_list.props.hexpand = True
+        self.channel_list.props.show_separators = True
+        self.channel_list.props.activate_on_single_click = False
+        self.update_channel_list()
+        chanlinebox.append(self.channel_list)
+        outerbox.append(chanlinebox)
+
         pd.connect("response", self.on_prefs_response)
         pd.present()
 
     def on_prefs_response(self, prefs_dialog, response_code):
         if response_code == Gtk.ResponseType.OK:
             self.db_url = self.some_widgets["sbb"].props.text
+            self.channels = []
+
+            def fill_channels(box: Gtk.ListBox, row: Gtk.ListBoxRow):
+                self.channels.append(row.props.child.props.label)
+
+            self.channel_list.selected_foreach(fill_channels)
         prefs_dialog.destroy()
 
     def thread_task_runner(self):
@@ -241,14 +312,13 @@ class Interface(object):
 
         async def db_listener():
             self.async_loops.append(asyncio.get_running_loop())
-            dbw = DBTool(db_uri="postgresql://grey@10.56.0.4/labuser")
-            # dbw = DBTool(db_uri="postgresql://")
-            listen_channels = []
+            dbw = DBTool(db_uri=self.db_url)
+            # listen_channels = []
             # listen_channels.append("org_greyltc_raw_s1738994")
-            listen_channels.append("org_greyltc_tbl_runs")
-            listen_channels.append("org_greyltc_tbl_events")
-            listen_channels.append("org_greyltc_raw_s71c9f7e")
-            dbw.listen_channels = listen_channels
+            # listen_channels.append("org_greyltc_tbl_runs")
+            # listen_channels.append("org_greyltc_tbl_events")
+            # listen_channels.append("org_greyltc_raw_s71c9f7e")
+            dbw.listen_channels = self.channels
             aconn = None
             try:
                 aconn = await asyncio.create_task(psycopg.AsyncConnection.connect(conninfo=dbw.db_uri, autocommit=True), name="connect")
@@ -283,8 +353,8 @@ class Interface(object):
                         except Exception as e:
                             print(e)
 
-                    await asyncio.gather(*[acur.execute(f"UNLISTEN {ch}") for ch in dbw.listen_channels])
-                    await aconn.commit()
+                        await asyncio.gather(*[acur.execute(f"UNLISTEN {ch}") for ch in dbw.listen_channels])
+                        await aconn.commit()
 
         asyncio.run(db_listener())
         GLib.idle_add(self.cleanup_conn)
