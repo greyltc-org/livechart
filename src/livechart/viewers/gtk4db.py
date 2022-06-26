@@ -26,7 +26,7 @@ class Interface(object):
     version = "0.0.0"
     db_url = "postgresql://"
     some_widgets = {}
-    max_data_length = 700  # can be None for unbounded
+    max_data_length = 1000  # can be None for unbounded
     data = collections.deque([(float("nan"), float("nan"))], max_data_length)
     t0 = 0
     closing = False
