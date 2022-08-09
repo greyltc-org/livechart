@@ -1,10 +1,14 @@
 from concurrent.futures import thread
 import queue
 import gi
+import pygal
+from pygal.style import LightSolarizedStyle
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import GLib, Gtk, Gio, GObject, Adw
+gi.require_version("Rsvg", "2.0")
+from gi.repository import GLib, Gtk, Gio, GObject, Adw, Gdk, GdkPixbuf
+
 
 from importlib import resources
 from importlib.metadata import version
@@ -57,6 +61,9 @@ class Interface(object):
         self.t0 = time.time()
         self.s = Gio.SocketClient.new()
         self.float_size = struct.calcsize("f")
+        self.chart = pygal.XY(style=LightSolarizedStyle)
+        # self.chart.add("", [1, 3, 5, 16, 13, 3, 7, 9, 2, 1, 4, 9, 12, 10, 12, 16, 14, 12, 7, 2])
+        self.chart.add("", [])
 
     def on_app_activate(self, app):
         win = self.app.props.active_window
@@ -121,16 +128,24 @@ class Interface(object):
         win.present()
 
     def draw_canvas(self, canvas, ctx, lenx, leny):
-        self.fcc.set_size_inches(lenx / self.dpi, leny / self.dpi)
+        # self.fcc.set_size_inches(lenx / self.dpi, leny / self.dpi)
 
-        self.renderer.set_ctx_from_surface(ctx.get_target())
-        self.renderer.set_width_height(lenx, leny)
+        # t = Gdk.Texture.new_from_file(Gio.File.new_for_path("/tmp/svg"))
+        # pb = GdkPixbuf.Pixbuf.new_from_file_at_scale("/tmp/svg", -1, 125, True)
+        chart_bytes = self.chart.render_sparkline(width=500, height=50, show_dots=False, show_y_labels=True)
+        st = Gio.MemoryInputStream.new_from_bytes(GLib.Bytes.new_take(chart_bytes))
+        pb = GdkPixbuf.Pixbuf.new_from_stream_at_scale(st, lenx, -1, True)
+        Gdk.cairo_set_source_pixbuf(ctx, pb, 0, 0)
 
-        self.fcc.draw(self.renderer)
+        # self.renderer.set_ctx_from_surface(ctx.get_target())
+        # self.renderer.set_width_height(lenx, leny)
 
-    def update_val(self):
+        # self.fcc.draw(self.renderer)
+        ctx.paint()
+
+    def update_val(self, val):
         if "val" in self.some_widgets:
-            self.some_widgets["val"].props.label = f"Value={self.data[0][1]:.3f}"
+            self.some_widgets["val"].props.label = f"Value={val:.3f}"
 
     def handle_data(self, input_stream, result):
         if (not input_stream.props.socket.is_closed()) and (not self.closing):
@@ -154,7 +169,14 @@ class Interface(object):
         for v in vals:
             if "raw" in v["channel"]:
                 # self.data.appendleft((v["t"], v["i"] * v["v"]))
-                self.data.appendleft((v["t"], v["v"]))
+                # self.data.appendleft((v["t"], v["v"]))
+                newv = v["v"]
+                newt = v["t"]
+                chart_data = self.chart.raw_series[0][0]
+                if len(chart_data) >= self.max_data_length:
+                    chart_data.pop(0)
+                chart_data.append((newt, newv))
+                # self.chart.add("", (v["v"],))
             elif "runs" in v["channel"]:
                 run_msg = f"New Run by {v['user_id']}: {v['name']}"
                 toast = Adw.Toast.new(run_msg)
@@ -171,18 +193,19 @@ class Interface(object):
                 toast.props.timeout = 1
                 self.tol.add_toast(toast)
 
-        self.update_val()
-        self.new_plot()
+        self.update_val(v["v"])
+        # self.new_plot()
         self.canvas.queue_draw()
 
     def new_plot(self, *args):
-        x = [d[0] for d in self.data]
+        # x = [d[0] for d in self.data]
         y = [d[1] for d in self.data]
-        self.line.set_xdata(x)
-        self.line.set_ydata(y)
-        self.ax.autoscale(enable=True, axis="x", tight=True)
-        self.ax.autoscale(enable=True, axis="y", tight=False)
-        self.ax.relim()
+
+        # self.line.set_xdata(x)
+        # self.line.set_ydata(y)
+        # self.ax.autoscale(enable=True, axis="x", tight=True)
+        # self.ax.autoscale(enable=True, axis="y", tight=False)
+        # self.ax.relim()
 
     def create_action(self, name, callback):
         """Add an Action and connect to a callback"""
