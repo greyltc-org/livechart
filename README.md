@@ -12,6 +12,11 @@ python -m build --wheel
 ```
 python -m installer --destdir="./someplace" dist/*.whl
 ```
+one time setup for GSettings  
+```
+sudo cp gsettings/* /usr/share/glib-2.0/schemas/
+sudo glib-compile-schemas /usr/share/glib-2.0/schemas/
+```
 
 ## Test
 ### Manually

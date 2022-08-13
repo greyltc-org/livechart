@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<schemalist>
+  <schema id="org.greyltc.livechart" path="/org/greyltc/livechart/">
+    <key name="address" type="s">
+      <default>"postgresql://"</default>
+      <summary>Server Address</summary>
+      <description>Server address.</description>
+    </key>
+  </schema>
+</schemalist>
