@@ -419,7 +419,9 @@ class Interface(object):
 
     def on_prefs_response(self, prefs_dialog, response_code):
         if response_code == Gtk.ResponseType.OK:
-            self.db_url = self.some_widgets["sbb"].props.text
+            url = self.some_widgets["sbb"].props.text
+            self.db_url = self.settings.set_string("address", url)
+            self.db_url = url
             self.channels = []
 
             def fill_channels(box: Gtk.ListBox, row: Gtk.ListBoxRow):
