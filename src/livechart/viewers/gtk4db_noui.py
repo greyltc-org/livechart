@@ -1,13 +1,15 @@
 from concurrent.futures import thread
+from email.mime import base
 import queue
 import gi
 import pygal
 from pygal.style import LightSolarizedStyle
+from sklearn.feature_selection import SelectFdr
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 gi.require_version("Rsvg", "2.0")
-from gi.repository import GLib, Gtk, Gio, GObject, Adw, Gdk, GdkPixbuf, Rsvg
+from gi.repository import GLib, Gtk, Gio, GObject, Adw, Gdk, GdkPixbuf, Rsvg, Pango
 
 
 from importlib import resources
@@ -38,14 +40,14 @@ class Interface(object):
     async_loops = []
     threads = []
     channels: list[str] = []  # channels to listen to
-    all_channels: list[str] = ["no channels"]  # all possible channels
-    channel_list: Gtk.ListBox
+    all_channels: list[str] = [""]  # all possible channels
     sparkline_x = 500
     sparkline_y = 50
-    raw_channels = []
-    charts = {}
-    lb = {}  # latest bytes
-    das = {}
+    channel_widgets = {}  # dict of base widgets, with channel names for keys
+    # charts = {}
+    # lb = {}  # latest bytes
+    # das = {}
+    to_auto_select = ["raw"]  # if a channel name contains any of these strings, auto select it for listening
 
     def __init__(self):
         try:
@@ -59,7 +61,6 @@ class Interface(object):
         self.app.connect("shutdown", self.on_app_shutdown)
 
         self.settings = Gio.Settings.new(app_id)
-        self.db_url = self.settings.get_string("address")
 
         # setup about dialog
         self.ad = Gtk.AboutDialog.new()
@@ -72,9 +73,28 @@ class Interface(object):
         self.t0 = time.time()
         self.s = Gio.SocketClient.new()
         self.float_size = struct.calcsize("f")
+
+        self.mal = Pango.AttrList.new()
+        self.mal.insert(Pango.attr_family_new("monospace"))
+
+        self.ual = Pango.AttrList.new()
+        self.ual.insert(Pango.attr_underline_new(Pango.Underline.SINGLE))
+
+        self.bal = Pango.AttrList.new()
+        self.bal.insert(Pango.attr_weight_new(Pango.Weight.BOLD))
+
         # self.chart = pygal.XY(style=LightSolarizedStyle)
         # self.chart.add("", [1, 3, 5, 16, 13, 3, 7, 9, 2, 1, 4, 9, 12, 10, 12, 16, 14, 12, 7, 2])
         # self.chart.add("", [])
+
+    def do_autoselection(self):
+        autoselectors = []
+        autoselectors.append("raw")
+        self.channels = []
+        for chan in self.all_channels:
+            for asel in autoselectors:
+                if asel in chan:
+                    self.channels.append(chan)
 
     def on_app_activate(self, app):
         win = self.app.props.active_window
@@ -97,6 +117,8 @@ class Interface(object):
             mb.props.menu_model = menu
             tb.pack_end(mb)
 
+            self.db_url = self.settings.get_string("address")
+
             cbtn = Gtk.Button.new_from_icon_name("call-start")
             cbtn.connect("clicked", self.on_conn_btn_clicked)
             cbtn.props.tooltip_markup = "Connect to backend"
@@ -107,8 +129,8 @@ class Interface(object):
             dbtn.props.tooltip_markup = "Disconnect from backend"
             tb.pack_start(dbtn)
 
-            lbl = Gtk.Label.new("Value=")
-            tb.pack_start(lbl)
+            # lbl = Gtk.Label.new("Value=")
+            # tb.pack_start(lbl)
 
             win.props.titlebar = tb
 
@@ -119,7 +141,7 @@ class Interface(object):
             #    raise ValueError("Failed to import help overlay UI")
 
             # collect widgets we'll need to reference later
-            self.some_widgets["val"] = lbl
+            # self.some_widgets["val"] = lbl
             self.some_widgets["conn_btn"] = cbtn
 
             win.set_application(app)
@@ -148,6 +170,8 @@ class Interface(object):
             self.main_box = Gtk.Box.new(Gtk.Orientation.VERTICAL, 5)
             self.main_box.props.vexpand = True
             self.main_box.props.vexpand_set = True
+            self.smus_box = Gtk.Box.new(Gtk.Orientation.HORIZONTAL, 5)
+            self.main_box.append(self.smus_box)
             # self.set_homogeneous = True
             # self.main_box.append(self.canvas)
             # self.main_box.append(Gtk.Label.new("Hai!"))
@@ -176,6 +200,9 @@ class Interface(object):
             # chart_bytes = self.chart.render_sparkline(width=self.sparkline_x, height=self.sparkline_y, show_dots=False, show_y_labels=True)
             # self.pbls[pbli].write_bytes(GLib.Bytes.new_take(chart_bytes))
             # self.pbls[pbli].close()
+
+            self.fetch_channels()
+            self.do_autoselection()
 
         win.present()
 
@@ -235,53 +262,128 @@ class Interface(object):
                 # self.new_plot()
                 # self.canvas.queue_draw()
 
+    def handle_new_raw_data(self, user_data):
+        value = user_data[0]
+
+        # widgets
+        base = user_data[1][0]
+        vl = user_data[1][1]  # voltage label
+        vlv = user_data[1][3]  # voltage level bar
+        il = user_data[1][2]  # current label
+        ilv = user_data[1][4]  # current level bar
+
+        vl.props.label = f"V: {value['v']:+11.6f} [V]"
+        offsettedv = value["v"] - vlv.offset
+        if offsettedv < 0:
+            vlv.offset = value["v"]
+            offsettedv = 0
+        elif offsettedv > vlv.props.max_value:
+            vlv.props.max_value = offsettedv
+        vlv.props.value = offsettedv
+
+        il.props.label = f" I: {value['i']*1000:+11.6f} [mA]"
+        offsettedi = value["i"] - ilv.offset
+        if offsettedi < 0:
+            ilv.offset = value["i"]
+            offsettedi = 0
+        elif offsettedi > ilv.props.max_value:
+            ilv.props.max_value = offsettedi
+        ilv.props.value = offsettedi
+
+        # meme = base_widget.props.child
+        # meme = base_widget.get_last_child()
+        # meme.props.label = "nanoo"
+
+        # vlab = base_widget.get_last_child().get_first_child()
+        # ilab = base_widget.get_last_child().get_last_child()
+        # vlab.props.label = f"V: {value['v']:+03.6f}V"
+        # ilab.props.label = f"I: {value['i']*1000:+03.6f}mA"
+
+        # base_widget.props.child = Gtk.Label.new(f"Voltage={value['v']}V")
+        # base_widget.get_child().label = f"Voltage={value['v']}V"
+        # base_widget.props.child.label = f"Voltage={value['v']}V"
+        # base_widget.props.child.show()
+        # base_widget.get_child().queue_draw()
+
     def handle_db_data(self, vals):
         for v in vals:
-            if "raw" in v["channel"]:
-                new_chan = False
-                if v["channel"] not in self.raw_channels:
-                    new_chan = True
-                    self.raw_channels.append(v["channel"])
-                    self.raw_channels = sorted(self.raw_channels)
-                i = self.raw_channels.index(v["channel"])
-                if new_chan:
-                    nda = Gtk.DrawingArea.new()
-                    nda.props.height_request = self.sparkline_y + 10
-                    # nda.props.vexpand = True
-                    # nda.props.vexpand_set = True
-                    nda.set_draw_func(self.draw_canvas, len(self.raw_channels) - 1)
-                    # self.canvas.set_draw_func(self.draw_canvas, len(self.raw_channels) - 1)
-                    self.main_box.append(nda)
-                if i not in self.charts:
-                    self.charts[i] = pygal.XY(style=LightSolarizedStyle)
-                    self.charts[i].add("", [])
+            this_chan = v["channel"]
+            if "raw" in this_chan:
+                if this_chan not in self.channel_widgets:
+                    # make the new widget in the holding box in the correct order
+                    base = Gtk.Frame.new(f"SMU {this_chan.split('_s')[-1]}")  # new base widget
+                    sbox = Gtk.Box.new(Gtk.Orientation.VERTICAL, 0)
+
+                    svl = Gtk.Label.new()
+                    svl.props.attributes = self.mal
+                    sbox.append(svl)
+                    svlv = Gtk.LevelBar.new()
+                    svlv.offset = v["v"]
+                    svlv.props.max_value = v["v"] - svlv.offset
+                    sbox.append(svlv)
+
+                    sil = Gtk.Label.new()
+                    sil.props.attributes = self.mal
+                    sbox.append(sil)
+                    silv = Gtk.LevelBar.new()
+                    silv.offset = v["i"]
+                    silv.props.max_value = v["i"] - silv.offset
+                    sbox.append(silv)
+
+                    base.props.child = sbox
+                    self.channel_widgets[this_chan] = (base, svl, sil, svlv, silv)
+                    if len(self.channel_widgets) > 1:
+                        # (re)sort the dict
+                        self.channel_widgets = dict(sorted(self.channel_widgets.items(), key=lambda x: x[0]))
+                    sorted_channels = list(self.channel_widgets.keys())
+                    this_chan_num = sorted_channels.index(this_chan)
+                    self.smus_box.prepend(base)
+                    if this_chan_num != 0:  # it's not the first one
+                        prev_chan = sorted_channels[this_chan_num - 1]
+                        self.smus_box.reorder_child_after(self.channel_widgets[prev_chan][0], base)
+
+                # if new_chan:
+                #    nsl = Gtk.Label.new("Voltage=")
+                # nda = Gtk.DrawingArea.new()
+                # nda.props.height_request = self.sparkline_y + 10
+                # nda.props.vexpand = True
+                # nda.props.vexpand_set = True
+                # nda.set_draw_func(self.draw_canvas, len(self.raw_channels) - 1)
+                # self.canvas.set_draw_func(self.draw_canvas, len(self.raw_channels) - 1)
+
+                #        self.smus_box.prepend(nsl)
+                # if i not in self.charts:
+                #    self.charts[i] = pygal.XY(style=LightSolarizedStyle)
+                #    self.charts[i].add("", [])
 
                 # self.data.appendleft((v["t"], v["i"] * v["v"]))
                 # self.data.appendleft((v["t"], v["v"]))
-                newv = v["v"]
-                newt = v["t"]
-                chart_data = self.charts[i].raw_series[0][0]
-                if len(chart_data) >= self.max_data_length:
-                    chart_data.pop(0)
-                chart_data.append((newt, newv))
-                self.update_val(v["v"], i)
+
+                GLib.idle_add(self.handle_new_raw_data, (v, self.channel_widgets[this_chan]))
+
+                # newt = v["t"]
+                # chart_data = self.charts[i].raw_series[0][0]
+                # if len(chart_data) >= self.max_data_length:
+                #    chart_data.pop(0)
+                # chart_data.append((newt, newv))
+                # self.update_val(v["v"], i)
                 # store latest chart bytes
-                self.lb[i] = GLib.Bytes.new_take(self.charts[i].render_sparkline(width=self.sparkline_x, height=self.sparkline_y, show_dots=False, show_y_labels=True))
+                # self.lb[i] = GLib.Bytes.new_take(self.charts[i].render_sparkline(width=self.sparkline_x, height=self.sparkline_y, show_dots=False, show_y_labels=True))
 
                 # self.das[i].queue_draw()
                 # self.canvas.queue_draw()
-                for k, c in enumerate(self.main_box):
-                    if k == i:
-                        c.queue_draw()
-                        break
+                # for k, c in enumerate(self.main_box):
+                #    if k == i:
+                #        c.queue_draw()
+                #        break
 
-            elif "runs" in v["channel"]:
+            elif "runs" in this_chan:
                 run_msg = f"New Run by {v['user_id']}: {v['name']}"
                 toast = Adw.Toast.new(run_msg)
                 toast.props.timeout = 1
                 self.tol.add_toast(toast)
                 print(f"new run: ")
-            elif "events" in v["channel"]:
+            elif "events" in this_chan:
                 if v["complete"]:
                     what = "done."
                 else:
@@ -318,56 +420,75 @@ class Interface(object):
         self.ad.set_transient_for(win)
         self.ad.present()
 
-    def fetch_channels(self, button: Gtk.Button):
-        """update listen/notify channel list"""
+    def fetch_channels(self, button: Gtk.Button = None, listbox: Gtk.ListBox = None):
+        """ask the database for all channel names, updates the channel listbox if it's given"""
         query = "select event_object_schema, event_object_table from information_schema.triggers where event_manipulation = 'INSERT'"
-        fetched_channels = []
-        db_url = self.some_widgets["sbb"].props.text
+        self.all_channels = []
+        self.channels = []
         try:
-            with psycopg.connect(db_url) as conn:
+            with psycopg.connect(self.db_url) as conn:
                 with conn.cursor() as cur:
                     cur.execute(query)
                     for record in cur:
                         if len(record) == 2:
-                            fetched_channels.append(f"{record[0]}_{record[1]}")
+                            self.all_channels.append(f"{record[0]}_{record[1]}")
         except Exception as e:
-            print(f"Faulure to fetch channel list: {e}")
-        else:
-            if fetched_channels != []:
-                self.all_channels = fetched_channels
-                self.update_channel_list()
-                self.settings.set_string("address", db_url)
+            print(f"Failure fething channel list from the DB: {e}")
 
-        return None
+        if len(self.all_channels) == 0:
+            self.all_channels = [""]
 
-    def update_channel_list(self):
+        if listbox is not None:
+            self.update_channel_list(listbox)
+
+        # else:
+        #    if fetched_channels != []:
+        #        self.all_channels = fetched_channels
+        #        self.update_channel_list()
+
+    def update_channel_list(self, listbox):
         # clear the list
         while True:
             try:
-                self.channel_list.remove(self.channel_list.get_first_child())
+                listbox.remove(listbox.get_first_child())
             except:
                 break
 
         for chan in self.all_channels:
+            row_label = Gtk.Label.new()
+            row_label.props.attributes = self.mal
+            row_label.set_text(chan)
             chan_row = Gtk.ListBoxRow()
-            label = Gtk.Label.new(chan)
-            chan_row.props.child = label
-            self.channel_list.append(chan_row)
+            chan_row.props.activatable = False
+            chan_row.props.child = row_label
+            listbox.append(chan_row)
+            if chan in self.channels:
+                listbox.select_row(chan_row)
+
+    def url_change(self, *args, **kwargs):
+        """handle change in the url string"""
+        entry_widget = args[0]
+        self.db_url = entry_widget.get_text()
 
     def on_preferences_action(self, widget, _):
         win = self.app.props.active_window
         # setup prefs dialog
-        prefs_setup = {}
         pd = Gtk.Dialog.new()
+        pd.props.resizable = False
         pd.props.title = "Preferences"
         ok_but = pd.add_button("OK", Gtk.ResponseType.OK)
         cancel_but = pd.add_button("Cancel", Gtk.ResponseType.CANCEL)
         pd.set_transient_for(win)
         pd.set_default_response(Gtk.ResponseType.OK)
-        pd_content = pd.get_content_area()
+        content_box = pd.get_content_area()
+        content_box.props.orientation = Gtk.Orientation.VERTICAL
+        content_box.props.spacing = 5
+        content_box.props.margin_top = 5
+        content_box.props.margin_start = 5
+        content_box.props.margin_end = 5
 
         margin = 5
-        need_margins = [pd_content, ok_but, cancel_but]
+        need_margins = [ok_but, cancel_but]
         for margin_needer in need_margins:
             margin_needer.props.margin_top = margin
             margin_needer.props.margin_bottom = margin
@@ -377,57 +498,93 @@ class Interface(object):
 
         box_spacing = 5
 
-        outerbox = Gtk.Box.new(Gtk.Orientation.VERTICAL, box_spacing)
-        pd_content.append(outerbox)
+        # outerbox = Gtk.Box.new(Gtk.Orientation.VERTICAL, box_spacing)
+        # outerbox.set_hexpand(True)
+        # outerbox.compute_expand(Gtk.Orientation.HORIZONTAL)
+        # outerbox.set_size_request(-1, -1)
+        # outerbox.set_hexpand_set(True)
+        # pd_content.append(outerbox)
+        sbf = Gtk.Frame.new()
+        sbfl = Gtk.Label.new()
+        # sbfl.props.attributes = self.ual
+        sbfl.props.label = "Datbase Connection URL"
+        sbf.props.label_widget = sbfl
 
-        urllinebox = Gtk.Box.new(Gtk.Orientation.HORIZONTAL, box_spacing)
-        lbl = Gtk.Label.new("<b>Datbase connection URL: </b>")
-        lbl.props.use_markup = True
-        urllinebox.append(lbl)
-        server_box = Gtk.Entry.new()
-        server_box.set_width_chars(35)
-        sbb = server_box.get_buffer()
-        sbb.set_text(self.db_url, -1)
-        self.some_widgets["sbb"] = sbb
-        server_box.props.placeholder_text = "postgresql://"
-        server_box.props.activates_default = True
-        urllinebox.append(server_box)
-        outerbox.append(urllinebox)
+        # urllinebox = Gtk.Box.new(Gtk.Orientation.HORIZONTAL, box_spacing)
+        # urllinebox.set_hexpand(True)
+        # urllinebox.set_size_request(-1, -1)
+        # urllinebox.compute_expand(Gtk.Orientation.HORIZONTAL)
+        # urllinebox.set_hexpand_set(True)
+        # lbl = Gtk.Label.new("<b>Datbase connection URL: </b>")
+        # lbl.props.use_markup = True
+        # urllinebox.append(lbl)
+        server_entry = Gtk.Entry.new()
+        # al.insert(Pango.AttrWeight(Pango.Weight.BOLD, 0, 50))
+        # al.insert(Pango.attr_underline_new(Pango.Underline.SINGLE))
+        server_entry.props.attributes = self.mal
+        server_entry.props.text = self.db_url
+        # server_box.set_max_length(0)
+        # server_box.set_size_request(-1, -1)
+        # server_box.props.width_chars = len(self.db_url)
+        server_entry.props.width_chars = server_entry.props.text_length
+        # server_box.set_hexpand(True)
+        #
+        # server_box.compute_expand(Gtk.Orientation.HORIZONTAL)
+        # server_box.set_hexpand_set(True)
+        server_entry.connect("changed", self.url_change)
+        server_entry.props.placeholder_text = "postgresql://"
+        # server_box.props.activates_default = True
 
-        refresh_listen = Gtk.Box.new(Gtk.Orientation.HORIZONTAL, box_spacing)
-        lcb = Gtk.Button.new_with_label("(Re)Load listen channels")
-        lcb.props.hexpand = True
-        lcb.connect("clicked", self.fetch_channels)
-        refresh_listen.append(lcb)
-        outerbox.append(refresh_listen)
+        server_entry.props.margin_start = 5
+        server_entry.props.margin_end = 5
+        server_entry.props.margin_bottom = 5
+        sbf.props.child = server_entry
+        # urllinebox.append(sbf)
+        content_box.append(sbf)
 
-        chanlinebox = Gtk.Box.new(Gtk.Orientation.HORIZONTAL, box_spacing)
-        chan_lbl = Gtk.Label.new("<b>Select Listen Channels: </b>")
-        chan_lbl.props.use_markup = True
-        chanlinebox.append(chan_lbl)
-        self.channel_list = Gtk.ListBox.new()
-        self.channel_list.props.selection_mode = Gtk.SelectionMode.MULTIPLE
-        self.channel_list.props.hexpand = True
-        self.channel_list.props.show_separators = True
-        self.channel_list.props.activate_on_single_click = False
-        self.update_channel_list()
-        chanlinebox.append(self.channel_list)
-        outerbox.append(chanlinebox)
+        lf = Gtk.Frame.new()
+        lfl = Gtk.Label.new()
+        # lfl.props.attributes = self.bal
+        lfl.props.label = "Channels to Listen On"
+        lf.props.label_widget = lfl
+        lb = Gtk.Box.new(Gtk.Orientation.VERTICAL, box_spacing)
 
-        pd.connect("response", self.on_prefs_response)
+        # chanlinebox = Gtk.Box.new(Gtk.Orientation.HORIZONTAL, box_spacing)
+        # chan_lbl = Gtk.Label.new("<b>Select Listen Channels: </b>")
+        # chan_lbl.props.use_markup = True
+        # chanlinebox.append(chan_lbl)
+        channel_listbox = Gtk.ListBox.new()
+        channel_listbox.props.selection_mode = Gtk.SelectionMode.MULTIPLE
+        # self.channel_list.props.hexpand = True
+        channel_listbox.props.show_separators = True
+        channel_listbox.props.activate_on_single_click = False
+        self.update_channel_list(channel_listbox)
+        lb.append(channel_listbox)
+
+        lcb = Gtk.Button.new_with_label("Refresh")
+        lcb.connect("clicked", self.fetch_channels, channel_listbox)
+        lb.append(lcb)
+
+        lb.props.margin_start = 5
+        lb.props.margin_end = 5
+        lb.props.margin_bottom = 5
+        lf.props.child = lb
+        content_box.append(lf)
+
+        pd.connect("response", self.on_prefs_response, channel_listbox)
         pd.present()
 
-    def on_prefs_response(self, prefs_dialog, response_code):
+    def on_prefs_response(self, prefs_dialog, response_code, listbox):
         if response_code == Gtk.ResponseType.OK:
-            url = self.some_widgets["sbb"].props.text
-            self.db_url = self.settings.set_string("address", url)
-            self.db_url = url
+            self.settings.set_string("address", self.db_url)
             self.channels = []
 
             def fill_channels(box: Gtk.ListBox, row: Gtk.ListBoxRow):
                 self.channels.append(row.props.child.props.label)
 
-            self.channel_list.selected_foreach(fill_channels)
+            listbox.selected_foreach(fill_channels)
+        else:
+            self.db_url = self.settings.get_string("address")
         prefs_dialog.destroy()
 
     def thread_task_runner(self):
