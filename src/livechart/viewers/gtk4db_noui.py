@@ -1,10 +1,11 @@
-from concurrent.futures import thread
-from email.mime import base
-import queue
+# from concurrent.futures import thread
+# from email.mime import base
+# import queue
 import gi
-import pygal
-from pygal.style import LightSolarizedStyle
-from sklearn.feature_selection import SelectFdr
+
+# import pygal
+# from pygal.style import LightSolarizedStyle
+# from sklearn.feature_selection import SelectFdr
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
@@ -168,10 +169,22 @@ class Interface(object):
             # self.canvas.set_draw_func(self.draw_canvas, 0)
             self.tol = Adw.ToastOverlay.new()
             self.main_box = Gtk.Box.new(Gtk.Orientation.VERTICAL, 5)
+            self.main_box.spacing = 5
+            # self.main_box.margin_top = 50
+            # self.main_box.margin_bottom = 50
+            # self.main_box.margin_start = 50
+            # self.main_box.margin_end = 50
             self.main_box.props.vexpand = True
             self.main_box.props.vexpand_set = True
             self.smus_box = Gtk.Box.new(Gtk.Orientation.HORIZONTAL, 5)
+            self.smus_box.spacing = 5
+            self.smus_box.props.margin_top = 5
+            self.smus_box.props.margin_start = 5
+            self.smus_box.props.margin_end = 5
+            # self.smus_box.props.margin_bottom = 5
             self.main_box.append(self.smus_box)
+            # sep = Gtk.Seperator.new(Gtk.Orientation.HORIZONTAL)
+            self.main_box.append(Gtk.Separator.new(Gtk.Orientation.HORIZONTAL))
             # self.set_homogeneous = True
             # self.main_box.append(self.canvas)
             # self.main_box.append(Gtk.Label.new("Hai!"))
@@ -272,7 +285,7 @@ class Interface(object):
         il = user_data[1][2]  # current label
         ilv = user_data[1][4]  # current level bar
 
-        vl.props.label = f"V: {value['v']:+11.6f} [V]"
+        vl.props.label = f"V: {value['v']*1000:+7.1f} [mV]"
         offsettedv = value["v"] - vlv.offset
         if offsettedv < 0:
             vlv.offset = value["v"]
@@ -281,7 +294,7 @@ class Interface(object):
             vlv.props.max_value = offsettedv
         vlv.props.value = offsettedv
 
-        il.props.label = f" I: {value['i']*1000:+11.6f} [mA]"
+        il.props.label = f"I: {value['i']*1000:+7.1f} [mA]"
         offsettedi = value["i"] - ilv.offset
         if offsettedi < 0:
             ilv.offset = value["i"]
@@ -341,6 +354,12 @@ class Interface(object):
                     if this_chan_num != 0:  # it's not the first one
                         prev_chan = sorted_channels[this_chan_num - 1]
                         self.smus_box.reorder_child_after(self.channel_widgets[prev_chan][0], base)
+
+                    # reset all the numbers on the frame labels
+                    for chan_name, chan_ws in self.channel_widgets.items():
+                        chan_num = sorted_channels.index(chan_name)
+                        chan_frame = chan_ws[0]
+                        chan_frame.props.label = f"SMU{chan_num:03d}"
 
                 # if new_chan:
                 #    nsl = Gtk.Label.new("Voltage=")
