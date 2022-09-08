@@ -10,4 +10,5 @@
     "terminal.integrated.env.windows": {
         "PYTHONPATH": "${workspaceFolder}${pathSeparator}src",
     },
+    "python.analysis.typeCheckingMode": "basic",
 }

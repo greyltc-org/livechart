@@ -627,10 +627,7 @@ class Interface(object):
                 await aconn.set_read_only(True)
                 toast_text = f"Connected to {dbw.db_uri}"
             except Exception as e:
-                if hasattr(e, "message"):
-                    toast_text = f"Connection failure: {e.message}"
-                else:
-                    toast_text = f"Connection failure: {e}"
+                toast_text = f"Connection failure: {e}"
             toast = Adw.Toast.new(toast_text)
             toast.props.timeout = 3
             self.tol.add_toast(toast)
