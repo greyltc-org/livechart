@@ -13,20 +13,96 @@ gi.require_version("Rsvg", "2.0")
 from gi.repository import GLib, Gtk, Gio, GObject, Adw, Gdk, GdkPixbuf, Rsvg, Pango
 
 
-from importlib import resources
 from importlib.metadata import version
-import pathlib
 import collections
 import time
 
-# from matplotlib.backends.backend_cairo import FigureCanvasCairo, RendererCairo
-# from matplotlib.figure import Figure
+# import matplotlib
+
+# matplotlib.use("module://mplcairo.gtk")
+# from matplotlib.backend_bases import FigureCanvasBase
+# import matplotlib.pyplot as plt
+from mplcairo.gtk import FigureCanvas
+from matplotlib.figure import Figure
 import struct
 
 from livechart.db import DBTool
 import psycopg
 import asyncio
 import threading
+
+
+class BlitManager:
+    def __init__(self, canvas, animated_artists=()):
+        """
+        Parameters
+        ----------
+        canvas : FigureCanvasAgg
+            The canvas to work with, this only works for sub-classes of the Agg
+            canvas which have the `~FigureCanvasAgg.copy_from_bbox` and
+            `~FigureCanvasAgg.restore_region` methods.
+
+        animated_artists : Iterable[Artist]
+            List of the artists to manage
+        """
+        self.canvas = canvas
+        self._bg = None
+        self._artists = []
+
+        for a in animated_artists:
+            self.add_artist(a)
+        # grab the background on every draw
+        self.cid = canvas.mpl_connect("draw_event", self.on_draw)
+
+    def on_draw(self, event):
+        """Callback to register with 'draw_event'."""
+        cv = self.canvas
+        if event is not None:
+            if event.canvas != cv:
+                raise RuntimeError
+        self._bg = cv.copy_from_bbox(cv.figure.bbox)
+        self._draw_animated()
+
+    def add_artist(self, art):
+        """
+        Add an artist to be managed.
+
+        Parameters
+        ----------
+        art : Artist
+
+            The artist to be added.  Will be set to 'animated' (just
+            to be safe).  *art* must be in the figure associated with
+            the canvas this class is managing.
+
+        """
+        if art.figure != self.canvas.figure:
+            raise RuntimeError
+        art.set_animated(True)
+        self._artists.append(art)
+
+    def _draw_animated(self):
+        """Draw all of the animated artists."""
+        fig = self.canvas.figure
+        for a in self._artists:
+            fig.draw_artist(a)
+
+    def update(self):
+        """Update the screen with animated artists."""
+        cv = self.canvas
+        fig = cv.figure
+        # paranoia in case we missed the draw event,
+        if self._bg is None:
+            self.on_draw(None)
+        else:
+            # restore the background
+            cv.restore_region(self._bg)
+            # draw all of the animated artists
+            self._draw_animated()
+            # update the GUI state
+            cv.blit(fig.bbox)
+        # let the GUI event loop process anything it has to do
+        cv.flush_events()
 
 
 class Interface(object):
@@ -45,10 +121,16 @@ class Interface(object):
     sparkline_x = 500
     sparkline_y = 50
     channel_widgets = {}  # dict of base widgets, with channel names for keys
+    max_plots = 8  # number of plots to retain in the gui
+    n_plots = 0  # the number of plots we've currently retained
+    h_widgets = []  # container for horizontal box children
     # charts = {}
     # lb = {}  # latest bytes
     # das = {}
-    to_auto_select = ["raw"]  # if a channel name contains any of these strings, auto select it for listening
+    # to_auto_select = ["raw"]  # if a channel name contains any of these strings, auto select it for listening
+    to_auto_select = ["event"]  # if a channel name contains any of these strings, auto select it for listening
+    expecting = {}  # construct for holding pending incoming data before it's plotted
+    max_expecting = 10  # no more than this many outstanding event ids can be
 
     def __init__(self):
         try:
@@ -89,8 +171,8 @@ class Interface(object):
         # self.chart.add("", [])
 
     def do_autoselection(self):
-        autoselectors = []
-        autoselectors.append("raw")
+        autoselectors = self.to_auto_select
+        # autoselectors.append("raw")
         self.channels = []
         for chan in self.all_channels:
             for asel in autoselectors:
@@ -176,13 +258,30 @@ class Interface(object):
             # self.main_box.margin_end = 50
             self.main_box.props.vexpand = True
             self.main_box.props.vexpand_set = True
-            self.smus_box = Gtk.Box.new(Gtk.Orientation.HORIZONTAL, 5)
-            self.smus_box.spacing = 5
-            self.smus_box.props.margin_top = 5
-            self.smus_box.props.margin_start = 5
-            self.smus_box.props.margin_end = 5
+
+            self.scroller = Gtk.ScrolledWindow.new()
+            self.scroller.props.propagate_natural_height = True
+
+            hbox_spacing = 5
+            self.hbox = Gtk.Box.new(Gtk.Orientation.HORIZONTAL, hbox_spacing)
+            self.hbox.props.margin_top = hbox_spacing
+            self.hbox.props.margin_start = hbox_spacing
+            self.hbox.props.margin_end = hbox_spacing
+            # self.flower = Gtk.FlowBox.new()
+            # self.flower.props.max_children_per_line = self.max_plots
+            # self.flower.props.min_children_per_line = self.max_plots
+
+            # self.smus_box = Gtk.Box.new(Gtk.Orientation.HORIZONTAL, 5)
+            # self.smus_box.spacing = 5
+            # self.smus_box.props.margin_top = 5
+            # self.smus_box.props.margin_start = 5
+            # self.smus_box.props.margin_end = 5
             # self.smus_box.props.margin_bottom = 5
-            self.main_box.append(self.smus_box)
+            # self.main_box.append(self.smus_box)
+
+            self.scroller.set_child(self.hbox)
+            self.main_box.append(self.scroller)
+
             # sep = Gtk.Seperator.new(Gtk.Orientation.HORIZONTAL)
             self.main_box.append(Gtk.Separator.new(Gtk.Orientation.HORIZONTAL))
             # self.set_homogeneous = True
@@ -319,44 +418,46 @@ class Interface(object):
         for v in vals:
             this_chan = v["channel"]
             if "raw" in this_chan:
-                if this_chan not in self.channel_widgets:
-                    # make the new widget in the holding box in the correct order
-                    base = Gtk.Frame.new(f"SMU {this_chan.split('_s')[-1]}")  # new base widget
-                    sbox = Gtk.Box.new(Gtk.Orientation.VERTICAL, 0)
+                if v["eid"] in self.expecting:
+                    self.expecting[v["eid"]]["data"].append((v["v"], v["i"], v["t"], v["s"]))
+                # if this_chan not in self.channel_widgets:
+                #     # make the new widget in the holding box in the correct order
+                #     base = Gtk.Frame.new(f"SMU {this_chan.split('_s')[-1]}")  # new base widget
+                #     sbox = Gtk.Box.new(Gtk.Orientation.VERTICAL, 0)
 
-                    svl = Gtk.Label.new()
-                    svl.props.attributes = self.mal
-                    sbox.append(svl)
-                    svlv = Gtk.LevelBar.new()
-                    svlv.offset = v["v"]
-                    svlv.props.max_value = v["v"] - svlv.offset
-                    sbox.append(svlv)
+                #     svl = Gtk.Label.new()
+                #     svl.props.attributes = self.mal
+                #     sbox.append(svl)
+                #     svlv = Gtk.LevelBar.new()
+                #     svlv.offset = v["v"]
+                #     svlv.props.max_value = v["v"] - svlv.offset
+                #     sbox.append(svlv)
 
-                    sil = Gtk.Label.new()
-                    sil.props.attributes = self.mal
-                    sbox.append(sil)
-                    silv = Gtk.LevelBar.new()
-                    silv.offset = v["i"]
-                    silv.props.max_value = v["i"] - silv.offset
-                    sbox.append(silv)
+                #     sil = Gtk.Label.new()
+                #     sil.props.attributes = self.mal
+                #     sbox.append(sil)
+                #     silv = Gtk.LevelBar.new()
+                #     silv.offset = v["i"]
+                #     silv.props.max_value = v["i"] - silv.offset
+                #     sbox.append(silv)
 
-                    base.props.child = sbox
-                    self.channel_widgets[this_chan] = (base, svl, sil, svlv, silv)
-                    if len(self.channel_widgets) > 1:
-                        # (re)sort the dict
-                        self.channel_widgets = dict(sorted(self.channel_widgets.items(), key=lambda x: x[0]))
-                    sorted_channels = list(self.channel_widgets.keys())
-                    this_chan_num = sorted_channels.index(this_chan)
-                    self.smus_box.prepend(base)
-                    if this_chan_num != 0:  # it's not the first one
-                        prev_chan = sorted_channels[this_chan_num - 1]
-                        self.smus_box.reorder_child_after(self.channel_widgets[prev_chan][0], base)
+                #     base.props.child = sbox
+                #     self.channel_widgets[this_chan] = (base, svl, sil, svlv, silv)
+                #     if len(self.channel_widgets) > 1:
+                #         # (re)sort the dict
+                #         self.channel_widgets = dict(sorted(self.channel_widgets.items(), key=lambda x: x[0]))
+                #     sorted_channels = list(self.channel_widgets.keys())
+                #     this_chan_num = sorted_channels.index(this_chan)
+                #     self.smus_box.prepend(base)
+                #     if this_chan_num != 0:  # it's not the first one
+                #         prev_chan = sorted_channels[this_chan_num - 1]
+                #         self.smus_box.reorder_child_after(self.channel_widgets[prev_chan][0], base)
 
-                    # reset all the numbers on the frame labels
-                    for chan_name, chan_ws in self.channel_widgets.items():
-                        chan_num = sorted_channels.index(chan_name)
-                        chan_frame = chan_ws[0]
-                        chan_frame.props.label = f"SMU{chan_num:03d}"
+                #     # reset all the numbers on the frame labels
+                #     for chan_name, chan_ws in self.channel_widgets.items():
+                #         chan_num = sorted_channels.index(chan_name)
+                #         chan_frame = chan_ws[0]
+                #         chan_frame.props.label = f"SMU{chan_num:03d}"
 
                 # if new_chan:
                 #    nsl = Gtk.Label.new("Voltage=")
@@ -375,7 +476,7 @@ class Interface(object):
                 # self.data.appendleft((v["t"], v["i"] * v["v"]))
                 # self.data.appendleft((v["t"], v["v"]))
 
-                GLib.idle_add(self.handle_new_raw_data, (v, self.channel_widgets[this_chan]))
+                ##GLib.idle_add(self.handle_new_raw_data, (v, self.channel_widgets[this_chan]))
 
                 # newt = v["t"]
                 # chart_data = self.charts[i].raw_series[0][0]
@@ -400,20 +501,94 @@ class Interface(object):
                 self.tol.add_toast(toast)
                 print(f"new run: ")
             elif "events" in this_chan:
+                if "tbl_sweep_events" in this_chan:
+                    thing = "I-V sweep"
+                else:
+                    thing = "Unknown"
                 if v["complete"]:
                     what = "done."
+                    if thing == "I-V sweep":
+                        expdict = self.expecting.pop(v["id"], None)
+                        if expdict:
+                            what = f'done with {len(expdict["data"])} data points.'
+                            lns = expdict["lns"]
+                            lns[0].set_xdata([x[0] for x in expdict["data"]])
+                            lns[0].set_ydata([x[1] * -1 * 1000 for x in expdict["data"]])
+                            expdict["ax"].relim()
+                            expdict["ax"].autoscale()
+                            # expdict["ax"].autoscale(enable=True, axis="x", tight=True)
+                            # expdict["ax"].autoscale(enable=True, axis="y", tight=False)
+                            # expdict["ax"].relim()
+                            expdict["fig"].canvas.draw_idle()
+                            # expdict["fig"].show()
+                            # expdict["widget"].queue_draw()
+                            # expdict["bm"].update()
+                            # expdict["widget"].props.label += what
+                        else:
+                            what = f"done with no data points."
+                        # self.scroller.props.hadjustment.props.value = 1.0
                 else:
+                    if self.n_plots >= self.max_plots:
+                        to_remove = self.h_widgets.pop()
+                        self.hbox.remove(to_remove)
+                        self.n_plots -= 1
+                    self.n_plots += 1
+                    start_txt = f"{self.n_plots}: Collecting..."
+                    height = 200  # in pixels on the gui
+                    figsize = (6.4, 4.8)  # inches for matplotlib
+                    fig = Figure(figsize=figsize, dpi=100, layout="constrained")
+                    ax = fig.add_subplot()
+                    ax.grid(True)
+                    # ax.set_title("Moof")
+                    ax.set_xlabel("Voltage [V]")
+                    ax.set_ylabel("Current [mA]")
+                    # ax.autoscale(enable=True, axis="y", tight=False)
+                    # ax.autoscale(enable=True, axis="x", tight=False)
+                    # lns = ax.plot([], animated=True)
+                    lns = ax.plot([], marker="o", linestyle="solid", linewidth=1, markersize=2, markerfacecolor=(1, 1, 0, 0.5))
+                    # w = Gtk.Label.new(start_txt)
+                    w = FigureCanvas(fig)
+                    # w.unparent()
+                    w.props.content_width = int(height * (figsize[0] / figsize[1]))
+                    w.props.content_height = height
+                    # w.props.height_request = -1
+                    # w.props.width_request = -1
+                    w.props.vexpand = False
+                    w.props.hexpand = False
+                    self.hbox.prepend(w)
+                    self.h_widgets.insert(0, w)
+                    # bm =
+
+                    # w.set_draw_func(self.on_draw, (fig, w))
+                    # fig.draw_without_rendering()
+                    # new_one = {"widget": w, "bm": BlitManager(w, lns), "lns": lns, "ax": ax, "data": []}
+                    new_one = {"widget": w, "fig": fig, "lns": lns, "ax": ax, "data": []}
+                    self.expecting[v["id"]] = new_one
+                    # self.expecting[v["id"]]["widget"].set_draw_func(self.expecting[v["id"]]["bm"].on_draw)
+                    # self.expecting[v["id"]]["widget"].queue_draw()
                     what = "started."
-                msg = f"{v['kind']} {what}"
+                    # self.scroller.props.hadjustment.props.value = 1.0
+                msg = f"{thing} {what}"
                 toast = Adw.Toast.new(msg)
                 toast.props.timeout = 1
                 self.tol.add_toast(toast)
+
+        if len(self.expecting) > 10:
+            msg = "You're expecting too much!"
+            toast = Adw.Toast.new(msg)
+            toast.props.timeout = 1
+            self.tol.add_toast(toast)
+            self.expecting = {}
 
         # self.update_val(v["v"], i)
         # self.new_plot()
         # chart_bytes = self.charts[i].render_sparkline(width=self.sparkline_x, height=self.sparkline_y, show_dots=False, show_y_labels=True)
         # self.pbls[0].write_bytes(GLib.Bytes.new_take(chart_bytes))
         # self.pbls[0].close()
+
+    # def on_draw(self, canvas, ctx, xdim, ydim, ud):
+    # canvas.draw()
+    # ud[0].canvas.draw_idle()
 
     def new_plot(self, *args):
         # x = [d[0] for d in self.data]
