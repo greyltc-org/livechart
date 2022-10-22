@@ -17,12 +17,14 @@ from importlib.metadata import version
 import collections
 import time
 
-# import matplotlib
+from matplotlib import use as mpl_use
 
-# matplotlib.use("module://mplcairo.gtk")
+mpl_use("module://mplcairo.gtk")
+from mplcairo.gtk import FigureCanvas
+
 # from matplotlib.backend_bases import FigureCanvasBase
 # import matplotlib.pyplot as plt
-from mplcairo.gtk import FigureCanvas
+
 from matplotlib.figure import Figure
 import struct
 
@@ -131,6 +133,7 @@ class Interface(object):
     to_auto_select = ["event"]  # if a channel name contains any of these strings, auto select it for listening
     expecting = {}  # construct for holding pending incoming data before it's plotted
     max_expecting = 10  # no more than this many outstanding event ids can be
+    known_devices = {}  # construct for holding stuff we know about devices
 
     def __init__(self):
         try:
@@ -494,13 +497,19 @@ class Interface(object):
                 #        c.queue_draw()
                 #        break
 
-            elif "runs" in this_chan:
-                run_msg = f"New Run by {v['user_id']}: {v['name']}"
-                toast = Adw.Toast.new(run_msg)
-                toast.props.timeout = 1
-                self.tol.add_toast(toast)
-                print(f"new run: ")
+            # elif "runs" in this_chan:
+            #    new_rid = v["id"]
+            #    if new_rid not in self.known_runs:
+            #        self.known_runs[new_rid] = fetch_dev_deets
+            #    run_msg = f"New Run by {v['user_id']}: {v['name']}"
+            #    toast = Adw.Toast.new(run_msg)
+            #    toast.props.timeout = 1
+            #    self.tol.add_toast(toast)
+            #    print(f"new run: ")
             elif "events" in this_chan:
+                # if we've never seen this device before, fetch all of them for the run and add them to our known devices
+                if v["device_id"] not in self.known_devices:
+                    self.fetch_dev_deets(v["run_id"])
                 if "tbl_sweep_events" in this_chan:
                     thing = "I-V sweep"
                 else:
@@ -528,6 +537,7 @@ class Interface(object):
                             what = f"done with no data points."
                         # self.scroller.props.hadjustment.props.value = 1.0
                 else:
+                    this_dev = self.known_devices[str(v["device_id"])]
                     if self.n_plots >= self.max_plots:
                         to_remove = self.h_widgets.pop()
                         self.hbox.remove(to_remove)
@@ -539,7 +549,7 @@ class Interface(object):
                     fig = Figure(figsize=figsize, dpi=100, layout="constrained")
                     ax = fig.add_subplot()
                     ax.grid(True)
-                    # ax.set_title("Moof")
+                    ax.set_title(f'ID:{v["device_id"]} AKA {this_dev["user_label"]}#{this_dev["pad"]}')  # TODO: need to get slot in here
                     ax.set_xlabel("Voltage [V]")
                     ax.set_ylabel("Current [mA]")
                     # ax.autoscale(enable=True, axis="y", tight=False)
@@ -636,6 +646,42 @@ class Interface(object):
         #    if fetched_channels != []:
         #        self.all_channels = fetched_channels
         #        self.update_channel_list()
+
+    def fetch_dev_deets(self, rid: int):
+        """updates known devices given a run id"""
+        query1 = f"""
+        select
+            device_id,
+            name,
+            pad_no,
+            area(dark_cir) da,
+            area(light_cir) la
+        from
+            org_greyltc.tbl_run_devices
+        join org_greyltc.tbl_devices on
+            tbl_devices.id = device_id
+        join org_greyltc.tbl_substrates on
+            tbl_substrates.id = substrate_id
+        join org_greyltc.tbl_layout_devices tld on
+            tld.id = layout_device_id
+        where
+            run_id = {rid}
+        """
+        try:
+            with psycopg.connect(self.db_url) as conn:
+                with conn.cursor() as cur:
+                    cur.execute(query1)
+                    for record in cur:
+                        id = record[0]
+                        rcd = {
+                            "user_label": record[1],
+                            "pad": record[2],
+                            "light_area": record[3],
+                            "dark_area": record[3],
+                        }
+                        self.known_devices[str(id)] = rcd
+        except Exception as e:
+            print(f"Failure fething device details from the DB: {e}")
 
     def update_channel_list(self, listbox):
         # clear the list
