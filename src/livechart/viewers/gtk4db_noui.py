@@ -21,6 +21,7 @@ from matplotlib import use as mpl_use
 
 mpl_use("module://mplcairo.gtk")
 from mplcairo.gtk import FigureCanvas
+from matplotlib.text import Annotation as MPLAnnotation
 
 # from matplotlib.backend_bases import FigureCanvasBase
 # import matplotlib.pyplot as plt
@@ -32,79 +33,6 @@ from livechart.db import DBTool
 import psycopg
 import asyncio
 import threading
-
-
-class BlitManager:
-    def __init__(self, canvas, animated_artists=()):
-        """
-        Parameters
-        ----------
-        canvas : FigureCanvasAgg
-            The canvas to work with, this only works for sub-classes of the Agg
-            canvas which have the `~FigureCanvasAgg.copy_from_bbox` and
-            `~FigureCanvasAgg.restore_region` methods.
-
-        animated_artists : Iterable[Artist]
-            List of the artists to manage
-        """
-        self.canvas = canvas
-        self._bg = None
-        self._artists = []
-
-        for a in animated_artists:
-            self.add_artist(a)
-        # grab the background on every draw
-        self.cid = canvas.mpl_connect("draw_event", self.on_draw)
-
-    def on_draw(self, event):
-        """Callback to register with 'draw_event'."""
-        cv = self.canvas
-        if event is not None:
-            if event.canvas != cv:
-                raise RuntimeError
-        self._bg = cv.copy_from_bbox(cv.figure.bbox)
-        self._draw_animated()
-
-    def add_artist(self, art):
-        """
-        Add an artist to be managed.
-
-        Parameters
-        ----------
-        art : Artist
-
-            The artist to be added.  Will be set to 'animated' (just
-            to be safe).  *art* must be in the figure associated with
-            the canvas this class is managing.
-
-        """
-        if art.figure != self.canvas.figure:
-            raise RuntimeError
-        art.set_animated(True)
-        self._artists.append(art)
-
-    def _draw_animated(self):
-        """Draw all of the animated artists."""
-        fig = self.canvas.figure
-        for a in self._artists:
-            fig.draw_artist(a)
-
-    def update(self):
-        """Update the screen with animated artists."""
-        cv = self.canvas
-        fig = cv.figure
-        # paranoia in case we missed the draw event,
-        if self._bg is None:
-            self.on_draw(None)
-        else:
-            # restore the background
-            cv.restore_region(self._bg)
-            # draw all of the animated artists
-            self._draw_animated()
-            # update the GUI state
-            cv.blit(fig.bbox)
-        # let the GUI event loop process anything it has to do
-        cv.flush_events()
 
 
 class Interface(object):
@@ -123,17 +51,18 @@ class Interface(object):
     sparkline_x = 500
     sparkline_y = 50
     channel_widgets = {}  # dict of base widgets, with channel names for keys
-    max_plots = 8  # number of plots to retain in the gui
+    max_plots = 32  # number of plots to retain in the gui
     n_plots = 0  # the number of plots we've currently retained
     h_widgets = []  # container for horizontal box children
     # charts = {}
     # lb = {}  # latest bytes
     # das = {}
     # to_auto_select = ["raw"]  # if a channel name contains any of these strings, auto select it for listening
-    to_auto_select = ["event"]  # if a channel name contains any of these strings, auto select it for listening
+    to_auto_select = ["event", "raw", "run"]  # if a channel name contains any of these strings, auto select it for listening
     expecting = {}  # construct for holding pending incoming data before it's plotted
-    max_expecting = 10  # no more than this many outstanding event ids can be
+    max_expecting = 16  # no more than this many outstanding event ids can be
     known_devices = {}  # construct for holding stuff we know about devices
+    db_schema_dot = ""
 
     def __init__(self):
         try:
@@ -179,7 +108,7 @@ class Interface(object):
         self.channels = []
         for chan in self.all_channels:
             for asel in autoselectors:
-                if asel in chan:
+                if asel in chan[1]:
                     self.channels.append(chan)
 
     def on_app_activate(self, app):
@@ -214,6 +143,13 @@ class Interface(object):
             dbtn.connect("clicked", self.on_dsc_btn_clicked)
             dbtn.props.tooltip_markup = "Disconnect from backend"
             tb.pack_start(dbtn)
+
+            # autoscroll switch
+            self.asw = Gtk.Switch.new()
+            self.asw.props.state = True
+            # dbtn.connect("state-set", self.on_switch_change)
+            self.asw.props.tooltip_markup = "Turn on to always see the new plot"
+            tb.pack_end(self.asw)
 
             # lbl = Gtk.Label.new("Value=")
             # tb.pack_start(lbl)
@@ -507,78 +443,131 @@ class Interface(object):
             #    self.tol.add_toast(toast)
             #    print(f"new run: ")
             elif "events" in this_chan:
+                eid = v["id"]
+                did = v["device_id"]
+                rid = v["run_id"]
                 # if we've never seen this device before, fetch all of them for the run and add them to our known devices
-                if v["device_id"] not in self.known_devices:
-                    self.fetch_dev_deets(v["run_id"])
+                if did not in self.known_devices:
+                    self.fetch_dev_deets(rid)
+
+                # this device
+                td = self.known_devices[str(did)]
+
+                # figure out what we should call it in the UI
+                dnl = []
+                if td["user_label"]:
+                    dnl.append(td["user_label"])
+                dnl.append(f'{td["slot"]}#{td["pad"]}')
+                dev_name = ", ".join(dnl)
+
                 if "tbl_sweep_events" in this_chan:
-                    thing = "I-V sweep"
+                    thing = "J-V sweep"
+                elif "tbl_ss_events" in this_chan:
+                    thing = "Steady State"
+                elif "tbl_mppt_events" in this_chan:
+                    thing = "Max power point track"
                 else:
                     thing = "Unknown"
-                if v["complete"]:
-                    what = "done."
-                    if thing == "I-V sweep":
-                        expdict = self.expecting.pop(v["id"], None)
-                        if expdict:
-                            what = f'done with {len(expdict["data"])} data points.'
-                            lns = expdict["lns"]
-                            lns[0].set_xdata([x[0] for x in expdict["data"]])
-                            lns[0].set_ydata([x[1] * -1 * 1000 for x in expdict["data"]])
-                            expdict["ax"].relim()
-                            expdict["ax"].autoscale()
-                            # expdict["ax"].autoscale(enable=True, axis="x", tight=True)
-                            # expdict["ax"].autoscale(enable=True, axis="y", tight=False)
-                            # expdict["ax"].relim()
-                            expdict["fig"].canvas.draw_idle()
-                            # expdict["fig"].show()
-                            # expdict["widget"].queue_draw()
-                            # expdict["bm"].update()
-                            # expdict["widget"].props.label += what
-                        else:
-                            what = f"done with no data points."
-                        # self.scroller.props.hadjustment.props.value = 1.0
-                else:
-                    this_dev = self.known_devices[str(v["device_id"])]
-                    if self.n_plots >= self.max_plots:
-                        to_remove = self.h_widgets.pop()
-                        self.hbox.remove(to_remove)
-                        self.n_plots -= 1
-                    self.n_plots += 1
-                    start_txt = f"{self.n_plots}: Collecting..."
-                    height = 200  # in pixels on the gui
-                    figsize = (6.4, 4.8)  # inches for matplotlib
-                    fig = Figure(figsize=figsize, dpi=100, layout="constrained")
-                    ax = fig.add_subplot()
-                    ax.grid(True)
-                    ax.set_title(f'ID:{v["device_id"]} AKA {this_dev["user_label"]}#{this_dev["pad"]}')  # TODO: need to get slot in here
-                    ax.set_xlabel("Voltage [V]")
-                    ax.set_ylabel("Current [mA]")
-                    # ax.autoscale(enable=True, axis="y", tight=False)
-                    # ax.autoscale(enable=True, axis="x", tight=False)
-                    # lns = ax.plot([], animated=True)
-                    lns = ax.plot([], marker="o", linestyle="solid", linewidth=1, markersize=2, markerfacecolor=(1, 1, 0, 0.5))
-                    # w = Gtk.Label.new(start_txt)
-                    w = FigureCanvas(fig)
-                    # w.unparent()
-                    w.props.content_width = int(height * (figsize[0] / figsize[1]))
-                    w.props.content_height = height
-                    # w.props.height_request = -1
-                    # w.props.width_request = -1
-                    w.props.vexpand = False
-                    w.props.hexpand = False
-                    self.hbox.prepend(w)
-                    self.h_widgets.insert(0, w)
-                    # bm =
 
-                    # w.set_draw_func(self.on_draw, (fig, w))
-                    # fig.draw_without_rendering()
-                    # new_one = {"widget": w, "bm": BlitManager(w, lns), "lns": lns, "ax": ax, "data": []}
-                    new_one = {"widget": w, "fig": fig, "lns": lns, "ax": ax, "data": []}
-                    self.expecting[v["id"]] = new_one
-                    # self.expecting[v["id"]]["widget"].set_draw_func(self.expecting[v["id"]]["bm"].on_draw)
-                    # self.expecting[v["id"]]["widget"].queue_draw()
+                if not v["complete"]:
                     what = "started."
-                    # self.scroller.props.hadjustment.props.value = 1.0
-                msg = f"{thing} {what}"
+                    if thing != "Unknown":
+                        if self.n_plots >= self.max_plots:
+                            to_remove = self.h_widgets.pop(0)  # remove from the front
+                            self.hbox.remove(to_remove)
+                            self.n_plots -= 1
+                        self.n_plots += 1
+                        height = 250  # in pixels on the gui
+                        figsize = (6.4, 4.8)  # inches for matplotlib
+                        fig = Figure(figsize=figsize, dpi=100, layout="constrained")
+                        ax = fig.add_subplot()
+
+                        if "tbl_sweep_events" in this_chan:
+                            title = f"J-V: {dev_name}"
+                            xlab = "Voltage [V]"
+                            ylab = r"Current Density [$\mathregular{\frac{mA}{cm^2}}$]"
+                            ax.axhline(0, color="black")
+                            ax.axvline(0, color="black")
+                            bounds = [v["from_setpoint"], v["to_setpoint"]]
+                            left_v = min(bounds)
+                            right_v = max(bounds)
+                            lns = ax.plot([left_v, right_v], [0, 0], marker="o", linestyle="solid", linewidth=1, markersize=2, markerfacecolor=(1, 1, 0, 0.5))
+                        elif "tbl_mppt_events" in this_chan:
+                            title = f"MPPT: {dev_name}"
+                            xlab = "Time [s]"
+                            ylab = r"Power Density [$\mathregular{\frac{mW}{cm^2}}$]"
+                            lns = ax.plot([], marker="o", linestyle="solid", linewidth=1, markersize=2, markerfacecolor=(1, 1, 0, 0.5))
+                        elif "tbl_ss_events" in this_chan:
+                            title = f"{thing}: {dev_name}"
+                            xlab = "Time [s]"
+                            lns = ax.plot([], marker="o", linestyle="solid", linewidth=1, markersize=2, markerfacecolor=(1, 1, 0, 0.5))
+                            if v["fixed"] == 1:
+                                ylab = "Voltage [mV]"
+                                ax.legend((f'Current Fixed @ {v["setpoint"]}[mA]',))
+                            else:
+                                ylab = r"Current Density [$\mathregular{\frac{mA}{cm^2}}$]"
+                                ax.legend((f'Voltage Fixed @ {v["setpoint"]}[V]',))
+                        else:
+                            title = "Unknown"
+                            xlab = ""
+                            ylab = ""
+                            lns = ax.plot([], marker="o", linestyle="solid", linewidth=1, markersize=2, markerfacecolor=(1, 1, 0, 0.5))
+
+                        ax.annotate("Collecting Data...", xy=(0.5, 0.5), xycoords="axes fraction", va="center", ha="center", bbox=dict(boxstyle="round", fc="w"))
+                        ax.set_title(title)
+                        ax.set_xlabel(xlab)
+                        ax.set_ylabel(ylab)
+                        ax.grid(True)
+
+                        w = FigureCanvas(fig)
+                        w.props.content_width = int(height * (figsize[0] / figsize[1]))
+                        w.props.content_height = height
+                        # w.props.height_request = -1
+                        # w.props.width_request = -1
+                        w.props.vexpand = False
+                        w.props.hexpand = False
+
+                        self.hbox.append(w)
+                        self.h_widgets.append(w)
+
+                        # self.hbox.prepend(w)
+                        # self.h_widgets.insert(0, w)
+
+                        new_one = {"widget": w, "fig": fig, "lns": lns, "ax": ax, "did": did, "data": []}
+                        self.expecting[eid] = new_one
+                        if self.asw.props.state:  # if the autoscroll switch is on, scroll all the way to the right
+                            GLib.idle_add(self.maxscroll)
+                else:  # complete
+                    what = "done."
+                    expdict = self.expecting.pop(eid, None)
+                    if expdict:
+                        what = f'complete with {len(expdict["data"])} points.'
+                        lns = expdict["lns"]
+                        if "tbl_sweep_events" in this_chan:
+                            if v["light"]:
+                                this_area = self.known_devices[str(did)]["area"]  # in cm^2
+                            else:
+                                this_area = self.known_devices[str(did)]["dark_area"]  # in cm^2
+                            lns[0].set_xdata([x[0] for x in expdict["data"]])
+                            lns[0].set_ydata([x[1] * 1000 / this_area for x in expdict["data"]])
+                        elif "tbl_mppt_events" in this_chan:
+                            area = self.known_devices[str(did)]["area"]  # in cm^2
+                            lns[0].set_xdata([x[2] for x in expdict["data"]])
+                            lns[0].set_ydata([x[0] * x[1] * -1 * 1000 / area for x in expdict["data"]])
+                        elif "tbl_ss_events" in this_chan:
+                            area = self.known_devices[str(did)]["area"]  # in cm^2
+                            if v["fixed"] == 1:
+                                lns[0].set_xdata([x[2] for x in expdict["data"]])
+                                lns[0].set_ydata([x[0] * 1000 for x in expdict["data"]])
+                            else:
+                                lns[0].set_xdata([x[2] for x in expdict["data"]])
+                                lns[0].set_ydata([x[1] * 1000 / area for x in expdict["data"]])
+                        ax = expdict["ax"]
+                        [child.remove() for child in ax.get_children() if isinstance(child, MPLAnnotation)]  # delete annotations
+                        ax.relim()
+                        ax.autoscale()
+                        expdict["fig"].canvas.draw_idle()
+                msg = f"{thing} for ({dev_name}) {what}"
                 toast = Adw.Toast.new(msg)
                 toast.props.timeout = 1
                 self.tol.add_toast(toast)
@@ -599,6 +588,13 @@ class Interface(object):
     # def on_draw(self, canvas, ctx, xdim, ydim, ud):
     # canvas.draw()
     # ud[0].canvas.draw_idle()
+
+    def maxscroll(self):
+        """move the scroll bar all the way to the right"""
+        cv = self.scroller.props.hadjustment.props.value  # check where we are now
+        mv = self.scroller.props.hadjustment.props.upper  # check the max value
+        if cv != mv:  # only scroll if we need to
+            self.scroller.props.hadjustment.props.value = mv
 
     def new_plot(self, *args):
         # x = [d[0] for d in self.data]
@@ -632,7 +628,8 @@ class Interface(object):
                     cur.execute(query)
                     for record in cur:
                         if len(record) == 2:
-                            self.all_channels.append(f"{record[0]}_{record[1]}")
+                            self.all_channels.append(record)
+                            # self.all_channels.append(f"{record[0]}_{record[1]}")
         except Exception as e:
             print(f"Failure fething channel list from the DB: {e}")
 
@@ -651,21 +648,26 @@ class Interface(object):
         """updates known devices given a run id"""
         query1 = f"""
         select
-            device_id,
-            name,
-            pad_no,
-            area(dark_cir) da,
-            area(light_cir) la
+            trd.device_id,
+            tss.name slot,
+            ts.name user_label,
+            tld.pad_no,
+            area(light_cir) area,
+            area(dark_cir) dark_area
         from
-            org_greyltc.tbl_run_devices
-        join org_greyltc.tbl_devices on
+            {self.db_schema_dot}tbl_run_devices trd
+        join {self.db_schema_dot}tbl_devices on
             tbl_devices.id = device_id
-        join org_greyltc.tbl_substrates on
-            tbl_substrates.id = substrate_id
-        join org_greyltc.tbl_layout_devices tld on
+        join {self.db_schema_dot}tbl_substrates ts on
+            ts.id = substrate_id
+        join {self.db_schema_dot}tbl_slot_substrate_run_mappings tssrm on
+            tssrm.substrate_id = ts.id
+        join {self.db_schema_dot}tbl_layout_devices tld on
             tld.id = layout_device_id
+        join {self.db_schema_dot}tbl_setup_slots tss on
+            tss.id = slot_id
         where
-            run_id = {rid}
+            trd.run_id = {rid}
         """
         try:
             with psycopg.connect(self.db_url) as conn:
@@ -674,10 +676,11 @@ class Interface(object):
                     for record in cur:
                         id = record[0]
                         rcd = {
-                            "user_label": record[1],
-                            "pad": record[2],
-                            "light_area": record[3],
-                            "dark_area": record[3],
+                            "slot": record[1],
+                            "user_label": record[2],
+                            "pad": record[3],
+                            "area": record[4],
+                            "dark_area": record[5],
                         }
                         self.known_devices[str(id)] = rcd
         except Exception as e:
@@ -694,7 +697,7 @@ class Interface(object):
         for chan in self.all_channels:
             row_label = Gtk.Label.new()
             row_label.props.attributes = self.mal
-            row_label.set_text(chan)
+            row_label.set_text(chan[1])
             chan_row = Gtk.ListBoxRow()
             chan_row.props.activatable = False
             chan_row.props.child = row_label
@@ -817,7 +820,8 @@ class Interface(object):
             self.channels = []
 
             def fill_channels(box: Gtk.ListBox, row: Gtk.ListBoxRow):
-                self.channels.append(row.props.child.props.label)
+                self.channels.append(self.all_channels[row.get_index()])
+                # self.channels.append(row.props.child.props.label)
 
             listbox.selected_foreach(fill_channels)
         else:
@@ -838,7 +842,14 @@ class Interface(object):
         async def db_listener():
             self.async_loops.append(asyncio.get_running_loop())
             dbw = DBTool(db_uri=self.db_url)
-            dbw.listen_channels = self.channels
+            dbw.listen_channels = [f"{chan[0]}_{chan[1]}" for chan in self.channels]
+            schemas = set([chan[0] for chan in self.channels])
+            if len(schemas) > 1:
+                toast_text = "LIstening on multiple schemas.\nThis will not go well..."
+                toast = Adw.Toast.new(toast_text)
+                toast.props.timeout = 3
+                self.tol.add_toast(toast)
+            self.db_schema_dot = f"{schemas.pop()}."
             aconn = None
             try:
                 aconn = await asyncio.create_task(psycopg.AsyncConnection.connect(conninfo=dbw.db_uri, autocommit=True), name="connect")
@@ -938,6 +949,79 @@ class Interface(object):
         # parser = argparse.ArgumentParser(description="livechart program")
         # args = parser.parse_args()
         self.app.run()
+
+
+class BlitManager:
+    def __init__(self, canvas, animated_artists=()):
+        """
+        Parameters
+        ----------
+        canvas : FigureCanvasAgg
+            The canvas to work with, this only works for sub-classes of the Agg
+            canvas which have the `~FigureCanvasAgg.copy_from_bbox` and
+            `~FigureCanvasAgg.restore_region` methods.
+
+        animated_artists : Iterable[Artist]
+            List of the artists to manage
+        """
+        self.canvas = canvas
+        self._bg = None
+        self._artists = []
+
+        for a in animated_artists:
+            self.add_artist(a)
+        # grab the background on every draw
+        self.cid = canvas.mpl_connect("draw_event", self.on_draw)
+
+    def on_draw(self, event):
+        """Callback to register with 'draw_event'."""
+        cv = self.canvas
+        if event is not None:
+            if event.canvas != cv:
+                raise RuntimeError
+        self._bg = cv.copy_from_bbox(cv.figure.bbox)
+        self._draw_animated()
+
+    def add_artist(self, art):
+        """
+        Add an artist to be managed.
+
+        Parameters
+        ----------
+        art : Artist
+
+            The artist to be added.  Will be set to 'animated' (just
+            to be safe).  *art* must be in the figure associated with
+            the canvas this class is managing.
+
+        """
+        if art.figure != self.canvas.figure:
+            raise RuntimeError
+        art.set_animated(True)
+        self._artists.append(art)
+
+    def _draw_animated(self):
+        """Draw all of the animated artists."""
+        fig = self.canvas.figure
+        for a in self._artists:
+            fig.draw_artist(a)
+
+    def update(self):
+        """Update the screen with animated artists."""
+        cv = self.canvas
+        fig = cv.figure
+        # paranoia in case we missed the draw event,
+        if self._bg is None:
+            self.on_draw(None)
+        else:
+            # restore the background
+            cv.restore_region(self._bg)
+            # draw all of the animated artists
+            self._draw_animated()
+            # update the GUI state
+            cv.blit(fig.bbox)
+        # let the GUI event loop process anything it has to do
+        cv.flush_events()
 
 
 def main():
