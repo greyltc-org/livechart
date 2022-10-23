@@ -51,7 +51,7 @@ class Interface(object):
     sparkline_x = 500
     sparkline_y = 50
     channel_widgets = {}  # dict of base widgets, with channel names for keys
-    max_plots = 32  # number of plots to retain in the gui
+    max_plots = 64  # number of plots to retain in the gui
     n_plots = 0  # the number of plots we've currently retained
     h_widgets = []  # container for horizontal box children
     # charts = {}
