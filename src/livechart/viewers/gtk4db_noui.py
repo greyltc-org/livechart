@@ -65,10 +65,7 @@ class Interface(object):
     db_schema_dot = ""
 
     def __init__(self):
-        try:
-            self.version = version(__package__.split(".")[0])
-        except Exception as e:
-            pass  # this is not a package
+        self.version = version("livechart")
 
         app_id = "org.greyltc.livechart"
         self.app = Gtk.Application(application_id=app_id, flags=Gio.ApplicationFlags.FLAGS_NONE)
