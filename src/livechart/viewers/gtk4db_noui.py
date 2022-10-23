@@ -3,6 +3,8 @@
 # import queue
 import gi
 
+import livechart
+
 # import pygal
 # from pygal.style import LightSolarizedStyle
 # from sklearn.feature_selection import SelectFdr
@@ -22,6 +24,7 @@ from matplotlib import use as mpl_use
 mpl_use("module://mplcairo.gtk")
 from mplcairo.gtk import FigureCanvas
 from matplotlib.text import Annotation as MPLAnnotation
+from mpl_toolkits.axisartist.parasite_axes import HostAxes, ParasiteAxes
 
 # from matplotlib.backend_bases import FigureCanvasBase
 # import matplotlib.pyplot as plt
@@ -37,7 +40,7 @@ import threading
 
 class Interface(object):
     app = None
-    version = "0.0.0"
+    version = livechart.__version__
     db_url = "postgresql://"
     some_widgets = {}
     max_data_length = 1000  # can be None for unbounded
@@ -65,7 +68,6 @@ class Interface(object):
     db_schema_dot = ""
 
     def __init__(self):
-        self.version = version("livechart")
 
         app_id = "org.greyltc.livechart"
         self.app = Gtk.Application(application_id=app_id, flags=Gio.ApplicationFlags.FLAGS_NONE)
@@ -354,8 +356,34 @@ class Interface(object):
         for v in vals:
             this_chan = v["channel"]
             if "raw" in this_chan:
-                if v["eid"] in self.expecting:
-                    self.expecting[v["eid"]]["data"].append((v["v"], v["i"], v["t"], v["s"]))
+                eid = v["eid"]
+                if str(eid) in self.expecting:
+                    expdict = self.expecting[str(eid)]
+                    dline = (v["v"], v["i"], v["t"], v["s"])
+                    expdict["data"].append(dline)
+
+                    if "mppt" in this_chan:
+                        td = self.known_devices[str(self.expecting[str(eid)]["did"])]
+                        area = td["area"]  # in cm^2
+                        lns = expdict["lns"]
+
+                        # power
+                        lns[0].set_xdata([x[2] for x in expdict["data"]])
+                        lns[0].set_ydata([x[0] * x[1] * -1 * 1000 / area for x in expdict["data"]])
+
+                        # voltage
+                        lns[1].set_xdata([x[2] for x in expdict["data"]])
+                        lns[1].set_ydata([x[0] for x in expdict["data"]])
+
+                        # current
+                        lns[2].set_xdata([x[2] for x in expdict["data"]])
+                        lns[2].set_ydata([x[1] * -1 * 1000 / area for x in expdict["data"]])
+
+                        for ax in expdict["ax"]:
+                            # [child.remove() for child in anax.get_children() if isinstance(child, MPLAnnotation)]  # delete annotations
+                            ax.relim()
+                            ax.autoscale()
+                        expdict["fig"].canvas.draw_idle()
                 # if this_chan not in self.channel_widgets:
                 #     # make the new widget in the holding box in the correct order
                 #     base = Gtk.Frame.new(f"SMU {this_chan.split('_s')[-1]}")  # new base widget
@@ -475,26 +503,53 @@ class Interface(object):
                             self.n_plots -= 1
                         self.n_plots += 1
                         height = 250  # in pixels on the gui
-                        figsize = (6.4, 4.8)  # inches for matplotlib
+                        if "tbl_mppt_events" in this_chan:
+                            figsize = (12.8, 4.8)  # inches for matplotlib
+                        else:
+                            figsize = (6.4, 4.8)  # inches for matplotlib
                         fig = Figure(figsize=figsize, dpi=100, layout="constrained")
-                        ax = fig.add_subplot()
 
                         if "tbl_sweep_events" in this_chan:
+                            ax = fig.add_subplot()
                             title = f"J-V: {dev_name}"
                             xlab = "Voltage [V]"
                             ylab = r"Current Density [$\mathregular{\frac{mA}{cm^2}}$]"
                             ax.axhline(0, color="black")
                             ax.axvline(0, color="black")
-                            bounds = [v["from_setpoint"], v["to_setpoint"]]
-                            left_v = min(bounds)
-                            right_v = max(bounds)
-                            lns = ax.plot([left_v, right_v], [0, 0], marker="o", linestyle="solid", linewidth=1, markersize=2, markerfacecolor=(1, 1, 0, 0.5))
+                            lns = None
                         elif "tbl_mppt_events" in this_chan:
+                            ax = []
+                            ax.append(fig.add_axes([0.13, 0.15, 0.65, 0.74], axes_class=HostAxes))
+                            ax.append(ParasiteAxes(ax[0], sharex=ax[0]))
+                            ax.append(ParasiteAxes(ax[0], sharex=ax[0]))
+                            ax[0].parasites.append(ax[1])
+                            ax[0].parasites.append(ax[2])
+                            ax[0].axis["right"].set_visible(False)
+
+                            ax[1].axis["right"].set_visible(True)
+                            ax[1].axis["right"].major_ticklabels.set_visible(True)
+                            ax[1].axis["right"].label.set_visible(True)
+
+                            ax[2].axis["right2"] = ax[2].new_fixed_axis(loc="right", offset=(50, 0))
+
+                            lns = ax[0].plot([], marker="o", linestyle="solid", linewidth=2, markersize=3, markerfacecolor=(1, 1, 0, 0.5))
+                            lns += ax[1].plot([], marker="o", linestyle="solid", linewidth=1, markersize=2, alpha=0.2)
+                            lns += ax[2].plot([], marker="o", linestyle="solid", linewidth=1, markersize=2, alpha=0.2)
+
+                            ax[1].set_ylabel("Voltage [V]")
+                            ax[2].set_ylabel(r"Current Density [$\mathregular{\frac{mA}{cm^2}}$]")
+
+                            # ax.legend()
+
+                            ax[0].axis["left"].label.set_color(lns[0].get_color())
+                            ax[1].axis["right"].label.set_color(lns[1].get_color())
+                            ax[2].axis["right2"].label.set_color(lns[2].get_color())
+
                             title = f"MPPT: {dev_name}"
                             xlab = "Time [s]"
                             ylab = r"Power Density [$\mathregular{\frac{mW}{cm^2}}$]"
-                            lns = ax.plot([], marker="o", linestyle="solid", linewidth=1, markersize=2, markerfacecolor=(1, 1, 0, 0.5))
                         elif "tbl_ss_events" in this_chan:
+                            ax = fig.add_subplot()
                             title = f"{thing}: {dev_name}"
                             xlab = "Time [s]"
                             lns = ax.plot([], marker="o", linestyle="solid", linewidth=1, markersize=2, markerfacecolor=(1, 1, 0, 0.5))
@@ -505,16 +560,25 @@ class Interface(object):
                                 ylab = r"Current Density [$\mathregular{\frac{mA}{cm^2}}$]"
                                 ax.legend((f'Voltage Fixed @ {v["setpoint"]}[V]',))
                         else:
+                            ax = fig.add_subplot()
                             title = "Unknown"
                             xlab = ""
                             ylab = ""
                             lns = ax.plot([], marker="o", linestyle="solid", linewidth=1, markersize=2, markerfacecolor=(1, 1, 0, 0.5))
 
-                        ax.annotate("Collecting Data...", xy=(0.5, 0.5), xycoords="axes fraction", va="center", ha="center", bbox=dict(boxstyle="round", fc="w"))
-                        ax.set_title(title)
-                        ax.set_xlabel(xlab)
-                        ax.set_ylabel(ylab)
-                        ax.grid(True)
+                        if isinstance(ax, list):
+                            # ax[2].annotate("Collecting Data...", xy=(0.5, 0.5), xycoords="axes fraction", va="center", ha="center", bbox=dict(boxstyle="round", fc="chartreuse"))
+                            ax[0].set_title(title)
+                            ax[0].set_xlabel(xlab)
+                            ax[0].set_ylabel(ylab)
+                            ax[0].grid(True)
+                        else:
+                            ax_major = ax
+                            ax.annotate("Collecting Data...", xy=(0.5, 0.5), xycoords="axes fraction", va="center", ha="center", bbox=dict(boxstyle="round", fc="chartreuse"))
+                            ax.set_title(title)
+                            ax.set_xlabel(xlab)
+                            ax.set_ylabel(ylab)
+                            ax.grid(True)
 
                         w = FigureCanvas(fig)
                         w.props.content_width = int(height * (figsize[0] / figsize[1]))
@@ -531,38 +595,84 @@ class Interface(object):
                         # self.h_widgets.insert(0, w)
 
                         new_one = {"widget": w, "fig": fig, "lns": lns, "ax": ax, "did": did, "data": []}
-                        self.expecting[eid] = new_one
+                        self.expecting[str(eid)] = new_one
                         if self.asw.props.state:  # if the autoscroll switch is on, scroll all the way to the right
                             GLib.idle_add(self.maxscroll)
                 else:  # complete
                     what = "done."
-                    expdict = self.expecting.pop(eid, None)
-                    if expdict:
+                    expdict = self.expecting.pop(str(eid), None)
+                    if expdict and expdict["data"]:
                         what = f'complete with {len(expdict["data"])} points.'
                         lns = expdict["lns"]
+                        ax = expdict["ax"]
+                        fig = expdict["fig"]
                         if "tbl_sweep_events" in this_chan:
                             if v["light"]:
-                                this_area = self.known_devices[str(did)]["area"]  # in cm^2
+                                lit = "light"
+                                this_area = td["area"]  # in cm^2
                             else:
-                                this_area = self.known_devices[str(did)]["dark_area"]  # in cm^2
-                            lns[0].set_xdata([x[0] for x in expdict["data"]])
-                            lns[0].set_ydata([x[1] * 1000 / this_area for x in expdict["data"]])
+                                lit = "dark"
+                                this_area = td["dark_area"]  # in cm^2
+                            (line,) = ax.plot(
+                                [x[0] for x in expdict["data"]],
+                                [x[1] * 1000 / this_area for x in expdict["data"]],
+                                marker="o",
+                                linestyle="solid",
+                                linewidth=1,
+                                markersize=2,
+                                markerfacecolor=(1, 1, 0, 0.5),
+                            )
+                            if v["from_setpoint"] < v["to_setpoint"]:
+                                swp_dir = r"$\Longrightarrow$"
+                            else:
+                                swp_dir = r"$\Longleftarrow$"
+                            ax.legend([line], [f"{lit}{swp_dir}"])
                         elif "tbl_mppt_events" in this_chan:
-                            area = self.known_devices[str(did)]["area"]  # in cm^2
+                            # ax = fig.add_axes(axes_class=HostAxes)
+                            # fig.tight_layout()
+                            # ax.grid(True)
+                            # par1 = ParasiteAxes(ax, sharex=ax)
+                            # par2 = ParasiteAxes(ax, sharex=ax)
+                            # ax.parasites.append(par1)
+                            # ax.parasites.append(par2)
+                            # ax.axis["right"].set_visible(False)
+
+                            # par1.axis["right"].set_visible(True)
+                            # par1.axis["right"].major_ticklabels.set_visible(True)
+                            # par1.axis["right"].label.set_visible(True)
+
+                            # par2.axis["right2"] = par2.new_fixed_axis(loc="right", offset=(50, 0))
+
+                            area = td["area"]  # in cm^2
+
+                            # power
                             lns[0].set_xdata([x[2] for x in expdict["data"]])
                             lns[0].set_ydata([x[0] * x[1] * -1 * 1000 / area for x in expdict["data"]])
+
+                            # voltage
+                            lns[1].set_xdata([x[2] for x in expdict["data"]])
+                            lns[1].set_ydata([x[0] for x in expdict["data"]])
+
+                            # current
+                            lns[2].set_xdata([x[2] for x in expdict["data"]])
+                            lns[2].set_ydata([x[1] * -1 * 1000 / area for x in expdict["data"]])
                         elif "tbl_ss_events" in this_chan:
-                            area = self.known_devices[str(did)]["area"]  # in cm^2
+                            area = td["area"]  # in cm^2
                             if v["fixed"] == 1:
                                 lns[0].set_xdata([x[2] for x in expdict["data"]])
                                 lns[0].set_ydata([x[0] * 1000 for x in expdict["data"]])
                             else:
                                 lns[0].set_xdata([x[2] for x in expdict["data"]])
                                 lns[0].set_ydata([x[1] * 1000 / area for x in expdict["data"]])
-                        ax = expdict["ax"]
-                        [child.remove() for child in ax.get_children() if isinstance(child, MPLAnnotation)]  # delete annotations
-                        ax.relim()
-                        ax.autoscale()
+                        if isinstance(ax, list):
+                            for anax in ax:
+                                # [child.remove() for child in anax.get_children() if isinstance(child, MPLAnnotation)]  # delete annotations
+                                anax.relim()
+                                anax.autoscale()
+                        else:
+                            [child.remove() for child in ax.get_children() if isinstance(child, MPLAnnotation)]  # delete annotations
+                            ax.relim()
+                            ax.autoscale()
                         expdict["fig"].canvas.draw_idle()
                 msg = f"{thing} for ({dev_name}) {what}"
                 toast = Adw.Toast.new(msg)
