@@ -1,6 +1,7 @@
 # from concurrent.futures import thread
 # from email.mime import base
 # import queue
+from cProfile import label
 import gi
 
 import livechart
@@ -167,7 +168,7 @@ class Interface(object):
 
             win.set_application(app)
             # win.set_help_overlay(help_overlay)
-            win.props.title = f"livechart {self.version}"
+            win.props.title = f"livechart"
 
             # make actions for menu items
             self.create_action("about", self.on_about_action)
@@ -359,14 +360,16 @@ class Interface(object):
                 eid = v["eid"]
                 if str(eid) in self.expecting:
                     expdict = self.expecting[str(eid)]
-                    dline = (v["v"], v["i"], v["t"], v["s"])
+                    did = expdict["did"]
+                    td = self.known_devices[str(did)]  # this device
+                    area = td["area"]  # in cm^2
+                    lns = expdict["lns"]
+                    fig = expdict["fig"]
+                    ax = expdict["ax"]
+                    dline = (v["v"], v["i"], v["t"], v["s"])  # new data line
                     expdict["data"].append(dline)
 
                     if "mppt" in this_chan:
-                        td = self.known_devices[str(self.expecting[str(eid)]["did"])]
-                        area = td["area"]  # in cm^2
-                        lns = expdict["lns"]
-
                         # power
                         lns[0].set_xdata([x[2] for x in expdict["data"]])
                         lns[0].set_ydata([x[0] * x[1] * -1 * 1000 / area for x in expdict["data"]])
@@ -379,11 +382,21 @@ class Interface(object):
                         lns[2].set_xdata([x[2] for x in expdict["data"]])
                         lns[2].set_ydata([x[1] * -1 * 1000 / area for x in expdict["data"]])
 
-                        for ax in expdict["ax"]:
+                        for axnx in ax:
                             # [child.remove() for child in anax.get_children() if isinstance(child, MPLAnnotation)]  # delete annotations
-                            ax.relim()
-                            ax.autoscale()
-                        expdict["fig"].canvas.draw_idle()
+                            axnx.relim()
+                            axnx.autoscale()
+                        fig.canvas.draw_idle()
+                    elif "ss" in this_chan:
+                        if lns[0].get_label().startswith("Current"):
+                            lns[0].set_xdata([x[2] for x in expdict["data"]])
+                            lns[0].set_ydata([x[0] * 1000 for x in expdict["data"]])
+                        else:
+                            lns[0].set_xdata([x[2] for x in expdict["data"]])
+                            lns[0].set_ydata([x[1] * 1000 / area for x in expdict["data"]])
+                        ax.relim()
+                        ax.autoscale()
+                        fig.canvas.draw_idle()
                 # if this_chan not in self.channel_widgets:
                 #     # make the new widget in the holding box in the correct order
                 #     base = Gtk.Frame.new(f"SMU {this_chan.split('_s')[-1]}")  # new base widget
@@ -475,8 +488,7 @@ class Interface(object):
                 if did not in self.known_devices:
                     self.fetch_dev_deets(rid)
 
-                # this device
-                td = self.known_devices[str(did)]
+                td = self.known_devices[str(did)]  # this device
 
                 # figure out what we should call it in the UI
                 dnl = []
@@ -517,6 +529,7 @@ class Interface(object):
                             ax.axhline(0, color="black")
                             ax.axvline(0, color="black")
                             lns = None
+                            ax.annotate("Collecting Data...", xy=(0.5, 0.5), xycoords="axes fraction", va="center", ha="center", bbox=dict(boxstyle="round", fc="chartreuse"))
                         elif "tbl_mppt_events" in this_chan:
                             ax = []
                             ax.append(fig.add_axes([0.13, 0.15, 0.65, 0.74], axes_class=HostAxes))
@@ -552,13 +565,15 @@ class Interface(object):
                             ax = fig.add_subplot()
                             title = f"{thing}: {dev_name}"
                             xlab = "Time [s]"
-                            lns = ax.plot([], marker="o", linestyle="solid", linewidth=1, markersize=2, markerfacecolor=(1, 1, 0, 0.5))
+
                             if v["fixed"] == 1:
+                                led_txt = f'Current Fixed @ {v["setpoint"]}[mA]'
                                 ylab = "Voltage [mV]"
-                                ax.legend((f'Current Fixed @ {v["setpoint"]}[mA]',))
                             else:
                                 ylab = r"Current Density [$\mathregular{\frac{mA}{cm^2}}$]"
-                                ax.legend((f'Voltage Fixed @ {v["setpoint"]}[V]',))
+                                led_txt = f'Voltage Fixed @ {v["setpoint"]}[V]'
+                            lns = ax.plot([], label=led_txt, marker="o", linestyle="solid", linewidth=1, markersize=2, markerfacecolor=(1, 1, 0, 0.5))
+                            ax.legend()
                         else:
                             ax = fig.add_subplot()
                             title = "Unknown"
@@ -573,8 +588,6 @@ class Interface(object):
                             ax[0].set_ylabel(ylab)
                             ax[0].grid(True)
                         else:
-                            ax_major = ax
-                            ax.annotate("Collecting Data...", xy=(0.5, 0.5), xycoords="axes fraction", va="center", ha="center", bbox=dict(boxstyle="round", fc="chartreuse"))
                             ax.set_title(title)
                             ax.set_xlabel(xlab)
                             ax.set_ylabel(ylab)
@@ -628,52 +641,19 @@ class Interface(object):
                                 swp_dir = r"$\Longleftarrow$"
                             ax.legend([line], [f"{lit}{swp_dir}"])
                         elif "tbl_mppt_events" in this_chan:
-                            # ax = fig.add_axes(axes_class=HostAxes)
-                            # fig.tight_layout()
-                            # ax.grid(True)
-                            # par1 = ParasiteAxes(ax, sharex=ax)
-                            # par2 = ParasiteAxes(ax, sharex=ax)
-                            # ax.parasites.append(par1)
-                            # ax.parasites.append(par2)
-                            # ax.axis["right"].set_visible(False)
-
-                            # par1.axis["right"].set_visible(True)
-                            # par1.axis["right"].major_ticklabels.set_visible(True)
-                            # par1.axis["right"].label.set_visible(True)
-
-                            # par2.axis["right2"] = par2.new_fixed_axis(loc="right", offset=(50, 0))
-
-                            area = td["area"]  # in cm^2
-
-                            # power
-                            lns[0].set_xdata([x[2] for x in expdict["data"]])
-                            lns[0].set_ydata([x[0] * x[1] * -1 * 1000 / area for x in expdict["data"]])
-
-                            # voltage
-                            lns[1].set_xdata([x[2] for x in expdict["data"]])
-                            lns[1].set_ydata([x[0] for x in expdict["data"]])
-
-                            # current
-                            lns[2].set_xdata([x[2] for x in expdict["data"]])
-                            lns[2].set_ydata([x[1] * -1 * 1000 / area for x in expdict["data"]])
+                            # this is all done per-data-point now
+                            ax = None
+                            fig = None
                         elif "tbl_ss_events" in this_chan:
-                            area = td["area"]  # in cm^2
-                            if v["fixed"] == 1:
-                                lns[0].set_xdata([x[2] for x in expdict["data"]])
-                                lns[0].set_ydata([x[0] * 1000 for x in expdict["data"]])
-                            else:
-                                lns[0].set_xdata([x[2] for x in expdict["data"]])
-                                lns[0].set_ydata([x[1] * 1000 / area for x in expdict["data"]])
-                        if isinstance(ax, list):
-                            for anax in ax:
-                                # [child.remove() for child in anax.get_children() if isinstance(child, MPLAnnotation)]  # delete annotations
-                                anax.relim()
-                                anax.autoscale()
-                        else:
+                            # this is all done per-data-point now
+                            ax = None
+                            fig = None
+                        if ax:
                             [child.remove() for child in ax.get_children() if isinstance(child, MPLAnnotation)]  # delete annotations
                             ax.relim()
                             ax.autoscale()
-                        expdict["fig"].canvas.draw_idle()
+                        if fig:
+                            fig.canvas.draw_idle()
                 msg = f"{thing} for ({dev_name}) {what}"
                 toast = Adw.Toast.new(msg)
                 toast.props.timeout = 1
