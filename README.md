@@ -5,7 +5,7 @@ Real time data plotting (in the terminal) with python
 ## Getting Started
 ```bash
 python -m venv lc_venv --system-site-packages
-source lc_venv/bin/activate
+source lc_venv/bin/activate  # <-- this might change depending on your OS, see https://docs.python.org/3/library/venv.html#how-venvs-work
 python -m pip install --editable git+https://github.com/greyltc-org/livechart.git#egg=livechart
 livechart
 
