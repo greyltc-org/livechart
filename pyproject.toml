@@ -56,8 +56,5 @@ include = [
 only-include = ["src"]
 sources = ["src"]
 
-[tool.hatch.build.hooks.vcs]
-version-file = "_version.py"
-
 [tool.black]
 line-length = 999999
