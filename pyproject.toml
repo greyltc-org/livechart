@@ -49,8 +49,8 @@ ignore-vcs = true
 include = [
   "src/*.py",
   "src/livechart/*.py",
-  data,
-  gsettings,
+  "data",
+  "gsettings",
 ]
 
 [tool.hatch.build.targets.wheel.shared-data]
