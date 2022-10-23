@@ -8,6 +8,9 @@ python -m venv lc_venv --system-site-packages
 source lc_venv/bin/activate
 python -m pip install --editable git+https://github.com/greyltc-org/livechart.git#egg=livechart
 livechart
+
+# and when you want to be done with the virtual environment:
+deactivate
 ```
 
 ## Build
