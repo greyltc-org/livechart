@@ -44,13 +44,19 @@ source = "vcs"
 [project.gui-scripts]
 livechart = "livechart.viewers.gtk4db_noui:main"
 
-
 [tool.hatch.build]
 ignore-vcs = true
 include = [
   "src/*.py",
   "src/livechart/*.py",
+  data,
+  gsettings,
 ]
+
+[tool.hatch.build.targets.wheel.shared-data]
+"data/monitoring-system-icon.svg" = "share/icons/monitoring-system-icon.svg"
+"data/livechart.desktop" = "share/applications/livechart.desktop"
+"gsettings/org.greyltc.livechart.gschema.xml" = "share/glib-2.0/schemas/org.greyltc.livechart.gschema.xml"
 
 [tool.hatch.build.targets.wheel]
 only-include = ["src"]

@@ -82,7 +82,7 @@ class Interface(object):
         self.ad.props.version = self.version
         self.ad.props.authors = ["Greyson Christoforo"]
         self.ad.props.copyright = "(C) 2022 Grey Christoforo"
-        self.ad.props.logo_icon_name = "applications-other"
+        self.ad.props.logo_icon_name = "monitoring-system-icon"
 
         self.t0 = time.time()
         self.s = Gio.SocketClient.new()
