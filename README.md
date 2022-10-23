@@ -2,6 +2,14 @@
 Real time data plotting (in the terminal) with python
 [![asciicast](https://asciinema.org/a/327214.svg)](https://asciinema.org/a/327214)
 
+## Getting Started
+```
+python -m venv lc_venv --system-site-packages
+source lc_venv/bin/activate
+python -m pip install --editable git+https://github.com/greyltc-org/livechart.git#egg=livechart
+livechart
+```
+
 ## Build
 ```
 python -m build --wheel
