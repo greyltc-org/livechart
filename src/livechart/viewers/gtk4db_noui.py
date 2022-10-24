@@ -1,7 +1,7 @@
 # from concurrent.futures import thread
 # from email.mime import base
 # import queue
-from cProfile import label
+import gc
 import gi
 
 import livechart
@@ -57,18 +57,21 @@ class Interface(object):
     channel_widgets = {}  # dict of base widgets, with channel names for keys
     max_plots = 64  # number of plots to retain in the gui
     n_plots = 0  # the number of plots we've currently retained
-    h_widgets = []  # container for horizontal box children
+
     # charts = {}
     # lb = {}  # latest bytes
     # das = {}
     # to_auto_select = ["raw"]  # if a channel name contains any of these strings, auto select it for listening
     to_auto_select = ["event", "raw", "run"]  # if a channel name contains any of these strings, auto select it for listening
-    expecting = {}  # construct for holding pending incoming data before it's plotted
     max_expecting = 16  # no more than this many outstanding event ids can be
-    known_devices = {}  # construct for holding stuff we know about devices
     db_schema_dot = ""
+    last_run = None
 
     def __init__(self):
+        self.h_widgets = []  # container for horizontal box children
+        self.expecting = {}  # construct for holding pending incoming data before it's plotted
+        self.known_devices = {}  # construct for holding stuff we know about devices
+        self.did_possibly_mid_series = set()  # device IDs that are possibly mid-sweep series
 
         app_id = "org.greyltc.livechart"
         self.app = Gtk.Application(application_id=app_id, flags=Gio.ApplicationFlags.FLAGS_NONE)
@@ -359,131 +362,70 @@ class Interface(object):
             if "raw" in this_chan:
                 eid = v["eid"]
                 if str(eid) in self.expecting:
-                    expdict = self.expecting[str(eid)]
-                    did = expdict["did"]
+                    expecdict = self.expecting[str(eid)]
+                    did = expecdict["did"]
                     td = self.known_devices[str(did)]  # this device
                     area = td["area"]  # in cm^2
-                    lns = expdict["lns"]
-                    fig = expdict["fig"]
-                    ax = expdict["ax"]
+                    lns = expecdict["lns"]
+                    fig = expecdict["fig"]
+                    ax = expecdict["ax"]
                     dline = (v["v"], v["i"], v["t"], v["s"])  # new data line
-                    expdict["data"].append(dline)
+                    expecdict["data"].append(dline)
 
                     if "mppt" in this_chan:
+                        # update the plot data
+
                         # power
-                        lns[0].set_xdata([x[2] for x in expdict["data"]])
-                        lns[0].set_ydata([x[0] * x[1] * -1 * 1000 / area for x in expdict["data"]])
+                        lns[0].set_xdata([x[2] for x in expecdict["data"]])
+                        lns[0].set_ydata([x[0] * x[1] * -1 * 1000 / area for x in expecdict["data"]])
 
                         # voltage
-                        lns[1].set_xdata([x[2] for x in expdict["data"]])
-                        lns[1].set_ydata([x[0] for x in expdict["data"]])
+                        lns[1].set_xdata([x[2] for x in expecdict["data"]])
+                        lns[1].set_ydata([x[0] for x in expecdict["data"]])
 
                         # current
-                        lns[2].set_xdata([x[2] for x in expdict["data"]])
-                        lns[2].set_ydata([x[1] * -1 * 1000 / area for x in expdict["data"]])
+                        lns[2].set_xdata([x[2] for x in expecdict["data"]])
+                        lns[2].set_ydata([x[1] * -1 * 1000 / area for x in expecdict["data"]])
 
+                        # prepare the axes and queue up the redraw
                         for axnx in ax:
-                            # [child.remove() for child in anax.get_children() if isinstance(child, MPLAnnotation)]  # delete annotations
                             axnx.relim()
                             axnx.autoscale()
                         fig.canvas.draw_idle()
                     elif "ss" in this_chan:
+                        # update the plot data
                         if lns[0].get_label().startswith("Current"):
-                            lns[0].set_xdata([x[2] for x in expdict["data"]])
-                            lns[0].set_ydata([x[0] * 1000 for x in expdict["data"]])
+                            lns[0].set_xdata([x[2] for x in expecdict["data"]])
+                            lns[0].set_ydata([x[0] * 1000 for x in expecdict["data"]])
                         else:
-                            lns[0].set_xdata([x[2] for x in expdict["data"]])
-                            lns[0].set_ydata([x[1] * 1000 / area for x in expdict["data"]])
+                            lns[0].set_xdata([x[2] for x in expecdict["data"]])
+                            lns[0].set_ydata([x[1] * 1000 / area for x in expecdict["data"]])
+
+                        # prepare the axes and queue up the redraw
                         ax.relim()
                         ax.autoscale()
                         fig.canvas.draw_idle()
-                # if this_chan not in self.channel_widgets:
-                #     # make the new widget in the holding box in the correct order
-                #     base = Gtk.Frame.new(f"SMU {this_chan.split('_s')[-1]}")  # new base widget
-                #     sbox = Gtk.Box.new(Gtk.Orientation.VERTICAL, 0)
-
-                #     svl = Gtk.Label.new()
-                #     svl.props.attributes = self.mal
-                #     sbox.append(svl)
-                #     svlv = Gtk.LevelBar.new()
-                #     svlv.offset = v["v"]
-                #     svlv.props.max_value = v["v"] - svlv.offset
-                #     sbox.append(svlv)
-
-                #     sil = Gtk.Label.new()
-                #     sil.props.attributes = self.mal
-                #     sbox.append(sil)
-                #     silv = Gtk.LevelBar.new()
-                #     silv.offset = v["i"]
-                #     silv.props.max_value = v["i"] - silv.offset
-                #     sbox.append(silv)
-
-                #     base.props.child = sbox
-                #     self.channel_widgets[this_chan] = (base, svl, sil, svlv, silv)
-                #     if len(self.channel_widgets) > 1:
-                #         # (re)sort the dict
-                #         self.channel_widgets = dict(sorted(self.channel_widgets.items(), key=lambda x: x[0]))
-                #     sorted_channels = list(self.channel_widgets.keys())
-                #     this_chan_num = sorted_channels.index(this_chan)
-                #     self.smus_box.prepend(base)
-                #     if this_chan_num != 0:  # it's not the first one
-                #         prev_chan = sorted_channels[this_chan_num - 1]
-                #         self.smus_box.reorder_child_after(self.channel_widgets[prev_chan][0], base)
-
-                #     # reset all the numbers on the frame labels
-                #     for chan_name, chan_ws in self.channel_widgets.items():
-                #         chan_num = sorted_channels.index(chan_name)
-                #         chan_frame = chan_ws[0]
-                #         chan_frame.props.label = f"SMU{chan_num:03d}"
-
-                # if new_chan:
-                #    nsl = Gtk.Label.new("Voltage=")
-                # nda = Gtk.DrawingArea.new()
-                # nda.props.height_request = self.sparkline_y + 10
-                # nda.props.vexpand = True
-                # nda.props.vexpand_set = True
-                # nda.set_draw_func(self.draw_canvas, len(self.raw_channels) - 1)
-                # self.canvas.set_draw_func(self.draw_canvas, len(self.raw_channels) - 1)
-
-                #        self.smus_box.prepend(nsl)
-                # if i not in self.charts:
-                #    self.charts[i] = pygal.XY(style=LightSolarizedStyle)
-                #    self.charts[i].add("", [])
-
-                # self.data.appendleft((v["t"], v["i"] * v["v"]))
-                # self.data.appendleft((v["t"], v["v"]))
-
-                ##GLib.idle_add(self.handle_new_raw_data, (v, self.channel_widgets[this_chan]))
-
-                # newt = v["t"]
-                # chart_data = self.charts[i].raw_series[0][0]
-                # if len(chart_data) >= self.max_data_length:
-                #    chart_data.pop(0)
-                # chart_data.append((newt, newv))
-                # self.update_val(v["v"], i)
-                # store latest chart bytes
-                # self.lb[i] = GLib.Bytes.new_take(self.charts[i].render_sparkline(width=self.sparkline_x, height=self.sparkline_y, show_dots=False, show_y_labels=True))
-
-                # self.das[i].queue_draw()
-                # self.canvas.queue_draw()
-                # for k, c in enumerate(self.main_box):
-                #    if k == i:
-                #        c.queue_draw()
-                #        break
-
-            # elif "runs" in this_chan:
-            #    new_rid = v["id"]
-            #    if new_rid not in self.known_runs:
-            #        self.known_runs[new_rid] = fetch_dev_deets
-            #    run_msg = f"New Run by {v['user_id']}: {v['name']}"
-            #    toast = Adw.Toast.new(run_msg)
-            #    toast.props.timeout = 1
-            #    self.tol.add_toast(toast)
-            #    print(f"new run: ")
             elif "events" in this_chan:
                 eid = v["id"]
                 did = v["device_id"]
                 rid = v["run_id"]
+
+                # if it's a new run, let's freshen some stuff
+                # TODO: figure out why this isn't cleaning things up properly
+                if self.last_run and (rid != self.last_run):
+                    self.last_run = rid
+                    del self.did_possibly_mid_series
+                    del self.expecting
+                    del self.known_devices
+                    for h_widget in self.h_widgets:
+                        self.hbox.remove(h_widget)
+                    del self.h_widgets
+                    gc.collect()
+                    self.expecting = {}
+                    self.known_devices = {}
+                    self.h_widgets = []
+                    self.did_possibly_mid_series = set()
+
                 # if we've never seen this device before, fetch all of them for the run and add them to our known devices
                 if did not in self.known_devices:
                     self.fetch_dev_deets(rid)
@@ -521,16 +463,33 @@ class Interface(object):
                             figsize = (6.4, 4.8)  # inches for matplotlib
                         fig = Figure(figsize=figsize, dpi=100, layout="constrained")
 
+                        new_plot = True
                         if "tbl_sweep_events" in this_chan:
-                            ax = fig.add_subplot()
-                            title = f"J-V: {dev_name}"
-                            xlab = "Voltage [V]"
-                            ylab = r"Current Density [$\mathregular{\frac{mA}{cm^2}}$]"
-                            ax.axhline(0, color="black")
-                            ax.axvline(0, color="black")
+                            self.did_possibly_mid_series.add(did)  # this device might be mid-sweep serties
+
+                            # search for another event to plot into
+                            for val in self.expecting.values():
+                                if did == val["did"]:
+                                    new_ax = val["ax"]
+                                    if (hasattr(new_ax, "title")) and ("J-V" in str(new_ax.title)):
+                                        new_plot = False
+                                        break
+                            if new_plot:
+                                ax = fig.add_subplot()
+                                title = f"J-Vs: {dev_name}"
+                                xlab = "Voltage [V]"
+                                ylab = r"Current Density [$\mathregular{\frac{mA}{cm^2}}$]"
+                                ax.axhline(0, color="black")
+                                ax.axvline(0, color="black")
+                                ax.annotate("Collecting Data...", xy=(0.5, 0.5), xycoords="axes fraction", va="center", ha="center", bbox=dict(boxstyle="round", fc="chartreuse"))
+                            else:
+                                ax = None
+                                title = ""
+                                xlab = ""
+                                ylab = ""
                             lns = None
-                            ax.annotate("Collecting Data...", xy=(0.5, 0.5), xycoords="axes fraction", va="center", ha="center", bbox=dict(boxstyle="round", fc="chartreuse"))
                         elif "tbl_mppt_events" in this_chan:
+                            self.did_possibly_mid_series.discard(did)  # this device is definitely not mid-sweep series
                             ax = []
                             ax.append(fig.add_axes([0.13, 0.15, 0.65, 0.74], axes_class=HostAxes))
                             ax.append(ParasiteAxes(ax[0], sharex=ax[0]))
@@ -562,6 +521,7 @@ class Interface(object):
                             xlab = "Time [s]"
                             ylab = r"Power Density [$\mathregular{\frac{mW}{cm^2}}$]"
                         elif "tbl_ss_events" in this_chan:
+                            self.did_possibly_mid_series.discard(did)  # this device is definitely not mid-sweep series
                             ax = fig.add_subplot()
                             title = f"{thing}: {dev_name}"
                             xlab = "Time [s]"
@@ -575,6 +535,7 @@ class Interface(object):
                             lns = ax.plot([], label=led_txt, marker="o", linestyle="solid", linewidth=1, markersize=2, markerfacecolor=(1, 1, 0, 0.5))
                             ax.legend()
                         else:
+                            self.did_possibly_mid_series.discard(did)  # this device is definitely not mid-sweep series
                             ax = fig.add_subplot()
                             title = "Unknown"
                             xlab = ""
@@ -587,73 +548,102 @@ class Interface(object):
                             ax[0].set_xlabel(xlab)
                             ax[0].set_ylabel(ylab)
                             ax[0].grid(True)
-                        else:
+                        elif ax:
                             ax.set_title(title)
                             ax.set_xlabel(xlab)
                             ax.set_ylabel(ylab)
                             ax.grid(True)
 
-                        w = FigureCanvas(fig)
-                        w.props.content_width = int(height * (figsize[0] / figsize[1]))
-                        w.props.content_height = height
-                        # w.props.height_request = -1
-                        # w.props.width_request = -1
-                        w.props.vexpand = False
-                        w.props.hexpand = False
+                        if new_plot:
+                            w = FigureCanvas(fig)
+                            w.props.content_width = int(height * (figsize[0] / figsize[1]))
+                            w.props.content_height = height
+                            # w.props.height_request = -1
+                            # w.props.width_request = -1
+                            w.props.vexpand = False
+                            w.props.hexpand = False
 
-                        self.hbox.append(w)
-                        self.h_widgets.append(w)
+                            self.hbox.append(w)
+                            self.h_widgets.append(w)
+
+                            if self.asw.props.state:  # if the autoscroll switch is on, scroll all the way to the right
+                                GLib.idle_add(self.maxscroll)
+                        else:  # we're skipping making a new plot for this one
+                            w = None
 
                         # self.hbox.prepend(w)
                         # self.h_widgets.insert(0, w)
 
                         new_one = {"widget": w, "fig": fig, "lns": lns, "ax": ax, "did": did, "data": []}
-                        self.expecting[str(eid)] = new_one
-                        if self.asw.props.state:  # if the autoscroll switch is on, scroll all the way to the right
-                            GLib.idle_add(self.maxscroll)
+                        self.expecting[str(eid)] = new_one  # register a new expecdict to catch data we get for it
                 else:  # complete
                     what = "done."
-                    expdict = self.expecting.pop(str(eid), None)
-                    if expdict and expdict["data"]:
-                        what = f'complete with {len(expdict["data"])} points.'
-                        lns = expdict["lns"]
-                        ax = expdict["ax"]
-                        fig = expdict["fig"]
-                        if "tbl_sweep_events" in this_chan:
-                            if v["light"]:
-                                lit = "light"
-                                this_area = td["area"]  # in cm^2
-                            else:
-                                lit = "dark"
-                                this_area = td["dark_area"]  # in cm^2
-                            (line,) = ax.plot(
-                                [x[0] for x in expdict["data"]],
-                                [x[1] * 1000 / this_area for x in expdict["data"]],
-                                marker="o",
-                                linestyle="solid",
-                                linewidth=1,
-                                markersize=2,
-                                markerfacecolor=(1, 1, 0, 0.5),
-                            )
-                            if v["from_setpoint"] < v["to_setpoint"]:
-                                swp_dir = r"$\Longrightarrow$"
-                            else:
-                                swp_dir = r"$\Longleftarrow$"
-                            ax.legend([line], [f"{lit}{swp_dir}"])
-                        elif "tbl_mppt_events" in this_chan:
-                            # this is all done per-data-point now
-                            ax = None
-                            fig = None
-                        elif "tbl_ss_events" in this_chan:
-                            # this is all done per-data-point now
-                            ax = None
-                            fig = None
-                        if ax:
-                            [child.remove() for child in ax.get_children() if isinstance(child, MPLAnnotation)]  # delete annotations
-                            ax.relim()
-                            ax.autoscale()
-                        if fig:
-                            fig.canvas.draw_idle()
+                    if str(eid) in self.expecting:
+                        expecdict = self.expecting[str(eid)]
+                        if expecdict["data"]:
+                            data = expecdict["data"]
+                            what = f"complete with {len(data)} points."
+
+                            # search for a pre-existing sweep event for the same device to plot into
+                            for val in self.expecting.values():
+                                if did == val["did"]:
+                                    new_ax = val["ax"]
+                                    if (hasattr(new_ax, "title")) and ("J-V" in str(new_ax.title)):
+                                        expecdict = val
+                                        break
+
+                            lns = expecdict["lns"]
+                            ax = expecdict["ax"]
+                            fig = expecdict["fig"]
+                            if "tbl_sweep_events" in this_chan:
+                                if v["light"]:
+                                    lit = "light"
+                                    this_area = td["area"]  # in cm^2
+                                else:
+                                    lit = "dark"
+                                    this_area = td["dark_area"]  # in cm^2
+                                if v["from_setpoint"] < v["to_setpoint"]:
+                                    swp_dir = r"$\Longrightarrow$"
+                                else:
+                                    swp_dir = r"$\Longleftarrow$"
+                                (line,) = ax.plot(
+                                    [x[0] for x in data],
+                                    [x[1] * 1000 / this_area for x in data],
+                                    label=f"{lit}{swp_dir}",
+                                    marker="o",
+                                    linestyle="solid",
+                                    linewidth=1,
+                                    markersize=2,
+                                    markerfacecolor=(1, 1, 0, 0.5),
+                                )
+                                ax.legend()
+                            elif "tbl_mppt_events" in this_chan:
+                                # this is all done per-data-point now
+                                ax = None
+                                fig = None
+                            elif "tbl_ss_events" in this_chan:
+                                # this is all done per-data-point now
+                                ax = None
+                                fig = None
+
+                            # prepare the axes and queue up the redraw if needed
+                            if ax:
+                                [child.remove() for child in ax.get_children() if isinstance(child, MPLAnnotation)]  # delete annotations
+                                ax.relim()
+                                ax.autoscale()
+                            if fig:
+                                fig.canvas.draw_idle()
+
+                            # drop expecdicts when it's safe (they're not involved in an ongoing sweep-series)
+                            drop_these = []
+                            for t_eid, expecdict in self.expecting.items():
+                                t_did = expecdict["did"]
+                                if t_did not in self.did_possibly_mid_series:
+                                    drop_these.append(t_eid)
+
+                            for t_eid in drop_these:
+                                del self.expecting[t_eid]
+
                 msg = f"{thing} for ({dev_name}) {what}"
                 toast = Adw.Toast.new(msg)
                 toast.props.timeout = 1
@@ -665,16 +655,6 @@ class Interface(object):
             toast.props.timeout = 1
             self.tol.add_toast(toast)
             self.expecting = {}
-
-        # self.update_val(v["v"], i)
-        # self.new_plot()
-        # chart_bytes = self.charts[i].render_sparkline(width=self.sparkline_x, height=self.sparkline_y, show_dots=False, show_y_labels=True)
-        # self.pbls[0].write_bytes(GLib.Bytes.new_take(chart_bytes))
-        # self.pbls[0].close()
-
-    # def on_draw(self, canvas, ctx, xdim, ydim, ud):
-    # canvas.draw()
-    # ud[0].canvas.draw_idle()
 
     def maxscroll(self):
         """move the scroll bar all the way to the right"""
