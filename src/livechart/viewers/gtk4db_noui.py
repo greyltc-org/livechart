@@ -365,7 +365,7 @@ class Interface(object):
                     expecdict = self.expecting[str(eid)]
                     did = expecdict["did"]
                     td = self.known_devices[str(did)]  # this device
-                    area = td["area"]  # in cm^2
+                    area = expecdict["effective_area"]  # in cm^2
                     lns = expecdict["lns"]
                     fig = expecdict["fig"]
                     ax = expecdict["ax"]
@@ -574,7 +574,7 @@ class Interface(object):
                         # self.hbox.prepend(w)
                         # self.h_widgets.insert(0, w)
 
-                        new_one = {"widget": w, "fig": fig, "lns": lns, "ax": ax, "did": did, "data": []}
+                        new_one = {"widget": w, "fig": fig, "lns": lns, "ax": ax, "did": did, "area": v["effective_area"], "data": []}
                         self.expecting[str(eid)] = new_one  # register a new expecdict to catch data we get for it
                 else:  # complete
                     what = "done."
@@ -582,6 +582,7 @@ class Interface(object):
                         expecdict = self.expecting[str(eid)]
                         if expecdict["data"]:
                             data = expecdict["data"]
+                            area = expecdict["effective_area"]  # in cm^2
                             what = f"complete with {len(data)} points."
 
                             # search for a pre-existing sweep event for the same device to plot into
@@ -598,17 +599,15 @@ class Interface(object):
                             if "tbl_sweep_events" in this_chan:
                                 if v["light"]:
                                     lit = "light"
-                                    this_area = td["area"]  # in cm^2
                                 else:
                                     lit = "dark"
-                                    this_area = td["dark_area"]  # in cm^2
                                 if v["from_setpoint"] < v["to_setpoint"]:
                                     swp_dir = r"$\Longrightarrow$"
                                 else:
                                     swp_dir = r"$\Longleftarrow$"
                                 (line,) = ax.plot(
                                     [x[0] for x in data],
-                                    [x[1] * 1000 / this_area for x in data],
+                                    [x[1] * 1000 / area for x in data],
                                     label=f"{lit}{swp_dir}",
                                     marker="o",
                                     linestyle="solid",
