@@ -365,7 +365,7 @@ class Interface(object):
                     expecdict = self.expecting[str(eid)]
                     did = expecdict["did"]
                     td = self.known_devices[str(did)]  # this device
-                    area = expecdict["effective_area"]  # in cm^2
+                    area = expecdict["area"]  # in cm^2
                     lns = expecdict["lns"]
                     fig = expecdict["fig"]
                     ax = expecdict["ax"]
@@ -582,7 +582,7 @@ class Interface(object):
                         expecdict = self.expecting[str(eid)]
                         if expecdict["data"]:
                             data = expecdict["data"]
-                            area = expecdict["effective_area"]  # in cm^2
+                            area = expecdict["area"]  # in cm^2
                             what = f"complete with {len(data)} points."
 
                             # search for a pre-existing sweep event for the same device to plot into
