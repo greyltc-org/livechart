@@ -374,17 +374,19 @@ class Interface(object):
 
                     if "mppt" in this_chan:
                         # update the plot data
+                        t0 = expecdict["data"][0][2]
+                        t = [x[2] - t0 for x in expecdict["data"]]
 
                         # power
-                        lns[0].set_xdata([x[2] for x in expecdict["data"]])
+                        lns[0].set_xdata(t)
                         lns[0].set_ydata([x[0] * x[1] * -1 * 1000 / area for x in expecdict["data"]])
 
                         # voltage
-                        lns[1].set_xdata([x[2] for x in expecdict["data"]])
+                        lns[1].set_xdata(t)
                         lns[1].set_ydata([x[0] for x in expecdict["data"]])
 
                         # current
-                        lns[2].set_xdata([x[2] for x in expecdict["data"]])
+                        lns[2].set_xdata(t)
                         lns[2].set_ydata([x[1] * -1 * 1000 / area for x in expecdict["data"]])
 
                         # prepare the axes and queue up the redraw
@@ -393,12 +395,14 @@ class Interface(object):
                             axnx.autoscale()
                         fig.canvas.draw_idle()
                     elif "ss" in this_chan:
+                        t0 = expecdict["data"][0][2]
+                        t = [x[2] - t0 for x in expecdict["data"]]
                         # update the plot data
                         if lns[0].get_label().startswith("Current"):
-                            lns[0].set_xdata([x[2] for x in expecdict["data"]])
+                            lns[0].set_xdata(t)
                             lns[0].set_ydata([x[0] * 1000 for x in expecdict["data"]])
                         else:
-                            lns[0].set_xdata([x[2] for x in expecdict["data"]])
+                            lns[0].set_xdata(t)
                             lns[0].set_ydata([x[1] * 1000 / area for x in expecdict["data"]])
 
                         # prepare the axes and queue up the redraw
