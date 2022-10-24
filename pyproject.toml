@@ -29,7 +29,8 @@ classifiers = [
 dependencies = [
   "psycopg>=3.0",
   "PyGObject",
-  "pycairo"
+  "pycairo",
+  "mplcairo",
 ]
 dynamic = ["version"]
 

@@ -12,11 +12,9 @@ import livechart
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-gi.require_version("Rsvg", "2.0")
-from gi.repository import GLib, Gtk, Gio, GObject, Adw, Gdk, GdkPixbuf, Rsvg, Pango
+from gi.repository import GLib, Gtk, Gio, GObject, Adw, Gdk, GdkPixbuf, Pango
 
 
-from importlib.metadata import version
 import collections
 import time
 
@@ -37,6 +35,15 @@ from livechart.db import DBTool
 import psycopg
 import asyncio
 import threading
+
+
+class AString(GObject.Object):
+    __gtype_name__ = "AString"
+    val = ""
+
+    def __init__(self, val: str):
+        super().__init__()
+        self.val = val
 
 
 class Interface(object):
@@ -226,6 +233,37 @@ class Interface(object):
 
             # sep = Gtk.Seperator.new(Gtk.Orientation.HORIZONTAL)
             self.main_box.append(Gtk.Separator.new(Gtk.Orientation.HORIZONTAL))
+
+            # self.slm = Gtk.NoSelection.new()
+            self.cv = Gtk.ColumnView.new(self.slm)
+            self.cv.props.halign = Gtk.Align.CENTER
+
+            col_defs = [
+                ("user_label", "Label"),
+                ("slot", "Slot"),
+                ("pad", "Pad"),
+                ("run_id", "Run ID"),
+                ("user", "User"),
+                ("area", "Area[cm^2]"),
+                ("dark_area", "Dark Area[cm^2]"),
+                ("voc_ss", "V_oc[V]"),
+                ("jsc_ss", "J_sc[mA/cm^2]"),
+                ("pmax_ss", "P_max[mW/cm^2]"),
+            ]
+            self.cols = []
+
+            for name, title in col_defs:
+                a_dict = {}
+                a_dict["title"] = title
+                a_dict["name"] = name
+                a_dict["store"] = Gio.ListStore.new(AString)
+                a_dict["slm"] = Gtk.NoSelection.new(a_dict["store"])
+                # TODO: make the SignalListItemFactory for this col to generate Gtk.Inscription items for the cells
+                a_dict["cvc"] = Gtk.ColumnViewColumn.new(a_dict["title"], factory)
+                self.cv.append_column(a_dict["cvc"])
+                self.cols.append(a_dict)
+
+            self.main_box.append(self.cv)
             # self.set_homogeneous = True
             # self.main_box.append(self.canvas)
             # self.main_box.append(Gtk.Label.new("Hai!"))
@@ -718,6 +756,7 @@ class Interface(object):
         """updates known devices given a run id"""
         query1 = f"""
         select
+            tu.name user_name,
             trd.device_id,
             tss.name slot,
             ts.name user_label,
@@ -736,6 +775,10 @@ class Interface(object):
             tld.id = layout_device_id
         join {self.db_schema_dot}tbl_setup_slots tss on
             tss.id = slot_id
+        join {self.db_schema_dot}tbl_runs tr on
+            tr.id = trd.run_id
+        join {self.db_schema_dot}tbl_users tu on
+            tu.id = tr.user_id
         where
             trd.run_id = {rid}
         """
@@ -744,14 +787,20 @@ class Interface(object):
                 with conn.cursor() as cur:
                     cur.execute(query1)
                     for record in cur:
-                        id = record[0]
+                        id = record[1]
                         rcd = {
-                            "slot": record[1],
-                            "user_label": record[2],
-                            "pad": record[3],
-                            "area": record[4],
-                            "dark_area": record[5],
+                            "user": record[0],
+                            "run_id": rid,
+                            "slot": record[2],
+                            "user_label": record[3],
+                            "pad": record[4],
+                            "area": record[5],
+                            "dark_area": record[6],
                         }
+                        # TODO: insert the cells now
+                        # for col in self.cols:
+                        #    if col["name"] in rcd:
+                        #        col["store"].append(Gtk.Label.new(str(rcd[col["name"]])))
                         self.known_devices[str(id)] = rcd
         except Exception as e:
             print(f"Failure fething device details from the DB: {e}")
