@@ -234,8 +234,7 @@ class Interface(object):
             # sep = Gtk.Seperator.new(Gtk.Orientation.HORIZONTAL)
             self.main_box.append(Gtk.Separator.new(Gtk.Orientation.HORIZONTAL))
 
-            # self.slm = Gtk.NoSelection.new()
-            self.cv = Gtk.ColumnView.new(self.slm)
+            self.cv = Gtk.ColumnView.new(Gtk.NoSelection.new())
             self.cv.props.halign = Gtk.Align.CENTER
 
             col_defs = [
@@ -259,7 +258,7 @@ class Interface(object):
                 a_dict["store"] = Gio.ListStore.new(AString)
                 a_dict["slm"] = Gtk.NoSelection.new(a_dict["store"])
                 # TODO: make the SignalListItemFactory for this col to generate Gtk.Inscription items for the cells
-                a_dict["cvc"] = Gtk.ColumnViewColumn.new(a_dict["title"], factory)
+                a_dict["cvc"] = Gtk.ColumnViewColumn.new(a_dict["title"])
                 self.cv.append_column(a_dict["cvc"])
                 self.cols.append(a_dict)
 
