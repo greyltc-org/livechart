@@ -55,14 +55,13 @@ class APlot(GObject.Object):
         dev_name = ", ".join(dnl)
         self.event_metadata = {}
         self.event_data = {}
-        self.register_event(event_line)
 
         if "tbl_mppt_events" in event_line["channel"]:
             figsize = (12.8, 4.8)  # inches for matplotlib
         else:
             figsize = (6.4, 4.8)  # inches for matplotlib
-        self.ar = figsize[0] / figsize[1]
-        self.px_width = self.ar * self.px_height
+        ar = figsize[0] / figsize[1]
+        self.px_width = ar * self.px_height
         self.fig = Figure(figsize=figsize, dpi=100, layout="constrained")
 
         if "tbl_mppt_events" in event_line["channel"]:
@@ -138,6 +137,8 @@ class APlot(GObject.Object):
             ax.set_ylabel(ylab)
             ax.grid(True)
 
+        self.register_event(event_line)
+
     @GObject.Property(type=GObject.TYPE_INT)
     def width_px(self):
         """figure width in pixels"""
@@ -201,13 +202,13 @@ class APlot(GObject.Object):
             else:
                 axes = []
 
-            if self.fig.canvas.get_mapped():
-                GLib.idle_add(self.idle_update, axes)
+            # if self.fig.canvas.get_mapped():
+            GLib.idle_add(self.idle_update, axes)
 
     def register_event(self, event_line):
         self.event_metadata[str(event_line["id"])] = event_line
-        if ("tbl_sweep_events" in event_line["channel"]) and (event_line["complete"]):
-            eid_str = str(event_line["id"])
+        eid_str = str(event_line["id"])
+        if ("tbl_sweep_events" in event_line["channel"]) and (event_line["complete"]) and (eid_str in self.event_data):
             axes = self.fig.axes
             ax = axes[0]
             [child.remove() for child in ax.get_children() if isinstance(child, MPLAnnotation)]  # delete annotations
@@ -231,8 +232,8 @@ class APlot(GObject.Object):
             )
             ax.legend()
 
-            if self.fig.canvas.get_mapped():
-                GLib.idle_add(self.idle_update, axes)
+            # if self.fig.canvas.get_mapped():
+            GLib.idle_add(self.idle_update, axes)
 
     def idle_update(self, iax):
         # prepare the axes and queue up the redraw only if the widget is mapped
@@ -459,13 +460,6 @@ class Interface(object):
             dbtn.props.tooltip_markup = "Disconnect from backend"
             tb.pack_start(dbtn)
 
-            # autoscroll switch
-            self.asw = Gtk.Switch.new()
-            self.asw.props.state = True
-            # dbtn.connect("state-set", self.on_switch_change)
-            self.asw.props.tooltip_markup = "Turn on to always see the new plot"
-            tb.pack_end(self.asw)
-
             # lbl = Gtk.Label.new("Value=")
             # tb.pack_start(lbl)
 
@@ -515,6 +509,9 @@ class Interface(object):
 
             self.hscroller = Gtk.ScrolledWindow.new()
             self.hscroller.props.propagate_natural_height = True
+            # self.hscroller.props.halign = Gtk.Align.END
+
+            # self.hscroller.props.hadjustment.connect("changed", self.scroll_change)
 
             hfactory = Gtk.SignalListItemFactory.new()
             hfactory.connect("setup", self._on_hfactory_setup)
@@ -523,15 +520,27 @@ class Interface(object):
             hfactory.connect("teardown", self._on_hfactory_teardown)
 
             self.panner = Gtk.GesturePan(orientation=Gtk.Orientation.HORIZONTAL, n_points=1)
-            self.panner.connect("pan", self.do_pan)
+            # self.panner.connect("pan", self.do_pan)
             self.panner.connect("drag-begin", self.record_start)
             self.panner.connect("drag-end", self.pan_done)
 
             self.hscroller.add_controller(self.panner)
 
+            # autoscroll switch
+            self.asw = Gtk.Switch.new()
+            self.asw.props.state = True
+            self.asw.connect("state_set", self.scroll_switch_state_change)
+            # dbtn.connect("state-set", self.on_switch_change)
+            self.asw.props.tooltip_markup = "Turn on to always see the new plot"
+            tb.pack_end(self.asw)
+
+            self.scroll_switch_state_change(self.asw, self.asw.props.state)
+
             self.hlist = Gtk.ListView.new(Gtk.NoSelection.new(self.plot_model), hfactory)
+            self.hlist.set_single_click_activate(False)
             self.hlist.props.orientation = Gtk.Orientation.HORIZONTAL
             self.hlist.props.show_separators = True
+            self.hlist.props.halign = Gtk.Align.END
 
             # hbox_spacing = 5
             # self.hbox = Gtk.Box.new(Gtk.Orientation.HORIZONTAL, hbox_spacing)
@@ -630,6 +639,40 @@ class Interface(object):
 
         win.present()
 
+    def scroll_switch_state_change(self, switch, state):
+        if state:
+            self.hscroller.props.hadjustment.set_value(self.hscroller.props.hadjustment.props.upper - self.hscroller.props.hadjustment.props.page_size)
+            try:
+                self.panner.disconnect_by_func(self.do_pan)
+            except:
+                pass  # maybe it was never connected, that's okay
+            self.hscroller.props.hadjustment.connect("changed", self.peg_scroller)
+            self.hscroller.props.hscrollbar_policy = Gtk.PolicyType.EXTERNAL  # EXTERNAL, NEVER
+
+        else:
+            self.panner.connect("pan", self.do_pan)
+            self.hscroller.props.hscrollbar_policy = Gtk.PolicyType.AUTOMATIC
+
+            try:
+                self.hscroller.props.hadjustment.disconnect_by_func(self.peg_scroller)
+            except:
+                pass  # maybe it was never connected, that's okay
+
+        # return False
+
+    def peg_scroller(self, hadjustment):
+        """pins the scroll bar to the right"""
+        scroll_later = lambda hadjustment: hadjustment.set_value(hadjustment.props.upper - hadjustment.props.page_size)
+        GLib.idle_add(scroll_later, hadjustment)
+        # max = hadjustment.props.upper - hadjustment.props.page_size
+        # hadjustment.set_value(max)
+        # print(f"loc = {hadjustment.props.value}")
+        # print(f"max = {max}")
+        # cv = self.hscroller.props.hadjustment.props.value  # check where we are now
+        # mv = self.hscroller.props.hadjustment.props.upper  # check the max value
+        # if cv != mv:  # only scroll if we need to
+        #    self.hscroller.props.hadjustment.props.value = mv
+
     # def add_rows(self, btn):
     #    n = 10
     #    for i in range(n):
@@ -650,7 +693,9 @@ class Interface(object):
     #     print(f"UNMAP! {args}")
 
     def _on_hfactory_setup(self, factory, list_item):
-        pass
+        list_item.props.activatable = False
+        list_item.props.selectable = False
+        # pass
         # height = 250  # in pixels on the gui
         # a_plot = list_item.get_item()
 
@@ -825,7 +870,6 @@ class Interface(object):
             this_chan = v["channel"]
             raw_dat = False
             event_dat = False
-            new_plot = False
             if "raw" in this_chan:
                 raw_dat = True
                 eid = v["eid"]
@@ -850,7 +894,6 @@ class Interface(object):
                         # handle the case we want to group data from different jvs into the same plot
                         if did_str not in self.device_jv_event_groups:
                             pm = APlot(event_line=v, this_device=td)
-                            new_plot = True
                             self.plot_model.append(pm)
                             mod_index = len(self.plot_model) - 1
                             self.event_id_to_plot_model_mapping[eid_str] = mod_index
@@ -861,7 +904,6 @@ class Interface(object):
                             pm = self.plot_model[self.device_jv_event_groups[did_str][0]]
                     else:
                         pm = APlot(event_line=v, this_device=td)
-                        new_plot = True
                         self.plot_model.append(pm)
                         mod_index = len(self.plot_model) - 1
                         # self.plot_model.insert(0, a_plot)
@@ -870,13 +912,6 @@ class Interface(object):
                     continue  # bail out if this is raw data for an event we missed the intro to
             else:
                 pm = self.plot_model[self.event_id_to_plot_model_mapping[eid_str]]
-            # pm_first_event = next(iter(pm.event_metadata.values()))
-            # did_str = str(pm_first_event["device_id"])
-            # if did_str not in self.known_devices:
-            #     self.fetch_dev_deets(pm_first_event["run_id"])
-            # td = self.known_devices[did_str]  # this device
-            # if not pm.this_device:
-            #     pm.register_dev_info(td)
 
             if raw_dat:
                 pm.add_data(eid, (v["v"], v["i"], v["t"], v["s"]))
@@ -884,11 +919,6 @@ class Interface(object):
 
             if event_dat:
                 pm.register_event(v)
-
-            if new_plot:
-                if self.asw.props.state:  # if the autoscroll switch is on, scroll all the way to the right
-                    # GLib.idle_add(self.minscroll)
-                    GLib.idle_add(self.maxscroll)
 
     def handle_db_data2(self, vals):
         for v in vals:
