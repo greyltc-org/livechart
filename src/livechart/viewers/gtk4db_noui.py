@@ -1,18 +1,16 @@
-# from concurrent.futures import thread
-# from email.mime import base
-# import queue
-import gc
 import gi
+
+gi.require_version("Adw", "1")
+gi.require_version("Gtk", "4.0")
+from gi.repository import GLib, Gtk, Gio, GObject, Adw, Gdk, GdkPixbuf, Pango
+
+from typing import Generator
 
 import livechart
 
 # import pygal
 # from pygal.style import LightSolarizedStyle
 # from sklearn.feature_selection import SelectFdr
-
-gi.require_version("Gtk", "4.0")
-gi.require_version("Adw", "1")
-from gi.repository import GLib, Gtk, Gio, GObject, Adw, Gdk, GdkPixbuf, Pango
 
 
 import collections
@@ -29,6 +27,7 @@ from mpl_toolkits.axisartist.parasite_axes import HostAxes, ParasiteAxes
 # import matplotlib.pyplot as plt
 
 from matplotlib.figure import Figure
+
 import struct
 
 from livechart.db import DBTool
@@ -37,13 +36,281 @@ import asyncio
 import threading
 
 
-class AString(GObject.Object):
-    __gtype_name__ = "AString"
-    val = ""
+class APlot(GObject.Object):
+    """plot class"""
 
-    def __init__(self, val: str):
+    __gtype_name__ = "APlot"
+    fig: Figure | None = None
+    px_height: float = 250
+    px_width: float = 0
+
+    def __init__(self, event_line: dict, this_device: dict):
         super().__init__()
-        self.val = val
+        self.this_device = this_device
+        # figure out what we should call this device in the ui
+        dnl = []
+        if this_device["user_label"]:
+            dnl.append(this_device["user_label"])
+        dnl.append(f'{this_device["slot"]}#{this_device["pad"]}')
+        dev_name = ", ".join(dnl)
+        self.event_metadata = {}
+        self.event_data = {}
+        self.register_event(event_line)
+
+        if "tbl_mppt_events" in event_line["channel"]:
+            figsize = (12.8, 4.8)  # inches for matplotlib
+        else:
+            figsize = (6.4, 4.8)  # inches for matplotlib
+        self.ar = figsize[0] / figsize[1]
+        self.px_width = self.ar * self.px_height
+        self.fig = Figure(figsize=figsize, dpi=100, layout="constrained")
+
+        if "tbl_mppt_events" in event_line["channel"]:
+            ax = []
+            ax.append(self.fig.add_axes([0.13, 0.15, 0.65, 0.74], axes_class=HostAxes))
+            ax.append(ParasiteAxes(ax[0], sharex=ax[0]))
+            ax.append(ParasiteAxes(ax[0], sharex=ax[0]))
+            ax[0].parasites.append(ax[1])
+            ax[0].parasites.append(ax[2])
+            ax[0].axis["right"].set_visible(False)
+
+            ax[1].axis["right"].set_visible(True)
+            ax[1].axis["right"].major_ticklabels.set_visible(True)
+            ax[1].axis["right"].label.set_visible(True)
+
+            ax[2].axis["right2"] = ax[2].new_fixed_axis(loc="right", offset=(50, 0))
+
+            lns = ax[0].plot([], marker="o", linestyle="solid", linewidth=2, markersize=3, markerfacecolor=(1, 1, 0, 0.5))
+            lns += ax[1].plot([], marker="o", linestyle="solid", linewidth=1, markersize=2, alpha=0.2)
+            lns += ax[2].plot([], marker="o", linestyle="solid", linewidth=1, markersize=2, alpha=0.2)
+
+            ax[1].set_ylabel("Voltage [mV]")
+            ax[2].set_ylabel(r"Current Density [$\mathregular{\frac{mA}{cm^2}}$]")
+
+            ax[0].yaxis.set_major_formatter("{x:.2f}")
+            ax[1].yaxis.set_major_formatter("{x:.0f}")
+            ax[2].yaxis.set_major_formatter("{x:.1f}")
+
+            ax[0].axis["left"].label.set_color(lns[0].get_color())
+            ax[1].axis["right"].label.set_color(lns[1].get_color())
+            ax[2].axis["right2"].label.set_color(lns[2].get_color())
+
+            title = f"MPPT: {dev_name}"
+            xlab = "Time [s]"
+            ylab = r"Power Density [$\mathregular{\frac{mW}{cm^2}}$]"
+        elif "tbl_sweep_events" in event_line["channel"]:
+            ax = self.fig.add_subplot()
+            title = f"J-Vs: {dev_name}"
+            xlab = "Voltage [V]"
+            ylab = r"Current Density [$\mathregular{\frac{mA}{cm^2}}$]"
+            ax.axhline(0, color="black")
+            ax.axvline(0, color="black")
+            ax.annotate("Collecting Data...", xy=(0.5, 0.5), xycoords="axes fraction", va="center", ha="center", bbox=dict(boxstyle="round", fc="chartreuse"))
+            lns = None
+        elif "tbl_ss_events" in event_line["channel"]:
+            ax = self.fig.add_subplot()
+            title = f"Steady State: {dev_name}"
+            xlab = "Time [s]"
+            if event_line["fixed"] == 1:
+                led_txt = f'Current Fixed @ {event_line["setpoint"]}[mA]'
+                ylab = "Voltage [mV]"
+            else:
+                led_txt = f'Voltage Fixed @ {event_line["setpoint"]}[V]'
+                ylab = r"Current Density [$\mathregular{\frac{mA}{cm^2}}$]"
+            lns = ax.plot([], label=led_txt, marker="o", linestyle="solid", linewidth=1, markersize=2, markerfacecolor=(1, 1, 0, 0.5))
+            ax.legend()
+        else:
+            ax = self.fig.add_subplot()
+            title = "Unknown"
+            xlab = ""
+            ylab = ""
+            lns = ax.plot([], marker="o", linestyle="solid", linewidth=1, markersize=2, markerfacecolor=(1, 1, 0, 0.5))
+
+        if isinstance(ax, list):
+            # ax[2].annotate("Collecting Data...", xy=(0.5, 0.5), xycoords="axes fraction", va="center", ha="center", bbox=dict(boxstyle="round", fc="chartreuse"))
+            ax[0].set_title(title)
+            ax[0].set_xlabel(xlab)
+            ax[0].set_ylabel(ylab)
+            ax[0].grid(True)
+        elif ax:
+            ax.set_title(title)
+            ax.set_xlabel(xlab)
+            ax.set_ylabel(ylab)
+            ax.grid(True)
+
+    @GObject.Property(type=GObject.TYPE_INT)
+    def width_px(self):
+        """figure width in pixels"""
+        if self.fig:
+            ret = self.px_width
+            # ret = self.fig.bbox.bounds[2]
+        else:
+            ret = 0
+        return ret
+
+    @GObject.Property(type=GObject.TYPE_INT)
+    def height_px(self):
+        """figure height in pixels"""
+        if self.fig:
+            ret = self.px_height
+            # ret = self.fig.bbox.bounds[3]
+        else:
+            ret = 0
+        return ret
+
+    def add_data(self, eid, new_data):
+        eid_str = str(eid)
+        if eid_str in self.event_data:
+            self.event_data[eid_str].append(new_data)
+        else:
+            self.event_data[eid_str] = [new_data]
+        event = self.event_metadata[eid_str]
+        if self.fig:
+            if "mppt" in event["channel"]:
+                t0 = self.event_data[eid_str][0][2]
+                t = [x[2] - t0 for x in self.event_data[eid_str]]
+                axes = self.fig.axes + self.fig.axes[0].parasites
+
+                # power
+                nlax = axes[0]
+                ln = nlax.get_lines()[0]
+                ln.set_xdata(t)
+                ln.set_ydata([x[0] * x[1] * -1 * 1000 / self.this_device["area"] for x in self.event_data[eid_str]])
+
+                # voltage
+                nlax = axes[1]
+                ln = nlax.get_lines()[0]
+                ln.set_xdata(t)
+                ln.set_ydata([x[0] * 1000 for x in self.event_data[eid_str]])
+
+                # current
+                nlax = axes[2]
+                ln = nlax.get_lines()[0]
+                ln.set_xdata(t)
+                ln.set_ydata([x[1] * -1 * 1000 / self.this_device["area"] for x in self.event_data[eid_str]])
+            elif "ss" in event["channel"]:
+                t0 = self.event_data[eid_str][0][2]
+                t = [x[2] - t0 for x in self.event_data[eid_str]]
+                axes = self.fig.axes
+                ln = axes[0].get_lines()[0]
+                ln.set_xdata(t)
+                if ln.get_label().startswith("Current"):
+                    ln.set_ydata([x[0] * 1000 for x in self.event_data[eid_str]])
+                else:
+                    ln.set_ydata([x[1] * 1000 / self.this_device["area"] for x in self.event_data[eid_str]])
+            else:
+                axes = []
+
+            if self.fig.canvas.get_mapped():
+                GLib.idle_add(self.idle_update, axes)
+
+    def register_event(self, event_line):
+        self.event_metadata[str(event_line["id"])] = event_line
+        if ("tbl_sweep_events" in event_line["channel"]) and (event_line["complete"]):
+            eid_str = str(event_line["id"])
+            axes = self.fig.axes
+            ax = axes[0]
+            [child.remove() for child in ax.get_children() if isinstance(child, MPLAnnotation)]  # delete annotations
+            if event_line["light"]:
+                lit = "light"
+            else:
+                lit = "dark"
+            if event_line["from_setpoint"] < event_line["to_setpoint"]:
+                swp_dir = r"$\Longrightarrow$"
+            else:
+                swp_dir = r"$\Longleftarrow$"
+            (line,) = ax.plot(
+                [x[0] for x in self.event_data[eid_str]],
+                [x[1] * 1000 / self.this_device["area"] for x in self.event_data[eid_str]],
+                label=f"{lit}{swp_dir}",
+                marker="o",
+                linestyle="solid",
+                linewidth=1,
+                markersize=2,
+                markerfacecolor=(1, 1, 0, 0.5),
+            )
+            ax.legend()
+
+            if self.fig.canvas.get_mapped():
+                GLib.idle_add(self.idle_update, axes)
+
+    def idle_update(self, iax):
+        # prepare the axes and queue up the redraw only if the widget is mapped
+        for ax in iax:
+            ax.relim()
+            ax.autoscale()
+        if iax and hasattr(self.fig, "canvas"):
+            self.fig.canvas.draw_idle()
+
+
+class DataRow(GObject.Object):
+    """table row class"""
+
+    __gtype_name__ = "DataRow"
+    col_defs = [
+        {"name": "user", "title": "User", "width": 120},
+        {"name": "run_id", "title": "Run ID", "width": 80},
+        {"name": "slot", "title": "Slot", "width": None},
+        {"name": "pad", "title": "Pad", "width": None},
+        {"name": "user_label", "title": "Label", "width": 120},
+        {"name": "area", "title": "Area[cm^2]", "width": None},
+        # {"name": "dark_area", "title": "Dark Area[cm^2]", "width": None},
+        {"name": "voc_ss", "title": "V_oc[V]", "width": 100},
+        {"name": "jsc_ss", "title": "J_sc[mA/cm^2]", "width": None},
+        {"name": "pmax_ss", "title": "P_max[mW/cm^2]", "width": None},
+    ]
+
+    def __init__(self, **kwargs):
+        super().__init__()
+        self._row_data = {}
+        for col in self.col_defs:
+            self._row_data[col["name"]] = ""
+
+        for key, val in kwargs.items():
+            if "area" in key:
+                val = round(val, 4)
+            self._row_data[key] = val
+
+    # TODO: possibly try to use a class factory or something for all these instead of doing them manually
+    @GObject.Property(type=str)
+    def user_label(self):
+        return self._row_data["user_label"]
+
+    @GObject.Property(type=str)
+    def slot(self):
+        return self._row_data["slot"]
+
+    @GObject.Property(type=str)
+    def pad(self):
+        return self._row_data["pad"]
+
+    @GObject.Property(type=str)
+    def run_id(self):
+        return self._row_data["run_id"]
+
+    @GObject.Property(type=str)
+    def user(self):
+        return self._row_data["user"]
+
+    @GObject.Property(type=str)
+    def area(self):
+        return self._row_data["area"]
+
+    @GObject.Property(type=str)
+    def dark_area(self):
+        return self._row_data["dark_area"]
+
+    @GObject.Property(type=str)
+    def voc_ss(self):
+        return self._row_data["voc_ss"]
+
+    @GObject.Property(type=str)
+    def jsc_ss(self):
+        return self._row_data["jsc_ss"]
+
+    @GObject.Property(type=str)
+    def pmax_ss(self):
+        return self._row_data["pmax_ss"]
 
 
 class Interface(object):
@@ -64,6 +331,12 @@ class Interface(object):
     channel_widgets = {}  # dict of base widgets, with channel names for keys
     max_plots = 64  # number of plots to retain in the gui
     n_plots = 0  # the number of plots we've currently retained
+    row_model: Gio.ListStore
+    plot_model: Gio.ListStore
+    cols = []
+    counter = 0
+    event_id_to_plot_model_mapping: dict[str, int] = {}  # given an event ID, which plot model index should we use
+    device_jv_event_groups = {}  # given a device id, which jv event IDs dies it have?
 
     # charts = {}
     # lb = {}  # latest bytes
@@ -79,6 +352,7 @@ class Interface(object):
         self.expecting = {}  # construct for holding pending incoming data before it's plotted
         self.known_devices = {}  # construct for holding stuff we know about devices
         self.did_possibly_mid_series = set()  # device IDs that are possibly mid-sweep series
+        self.countsup = Interface.counter_sequence()
 
         app_id = "org.greyltc.livechart"
         self.app = Gtk.Application(application_id=app_id, flags=Gio.ApplicationFlags.FLAGS_NONE)
@@ -86,6 +360,12 @@ class Interface(object):
         self.app.connect("shutdown", self.on_app_shutdown)
 
         self.settings = Gio.Settings.new(app_id)
+
+        # self.sorter = Gtk.StringSorter.new()
+        self.row_model = Gio.ListStore.new(DataRow)
+        # self.sorted_row_model = Gtk.SortListModel.new(self.row_model, self.sorter)
+
+        self.plot_model = Gio.ListStore.new(APlot)
 
         # setup about dialog
         self.ad = Gtk.AboutDialog.new()
@@ -108,9 +388,34 @@ class Interface(object):
         self.bal = Pango.AttrList.new()
         self.bal.insert(Pango.attr_weight_new(Pango.Weight.BOLD))
 
+        self.scroll_start = None
+
         # self.chart = pygal.XY(style=LightSolarizedStyle)
         # self.chart.add("", [1, 3, 5, 16, 13, 3, 7, 9, 2, 1, 4, 9, 12, 10, 12, 16, 14, 12, 7, 2])
         # self.chart.add("", [])
+
+    def record_start(self, gesture, start_x, start_y):
+        self.scroll_start = gesture.get_widget().props.hadjustment.props.value
+
+    def pan_done(self, gesture, start_x, start_y):
+        self.scroll_start = None
+
+    def do_pan(self, gesture, direction, distance):
+        scroller = gesture.get_widget()
+        max_pos = scroller.props.hadjustment.props.upper
+        min_pos = scroller.props.hadjustment.props.lower
+        if self.scroll_start is not None:
+            if direction == Gtk.PanDirection.RIGHT:
+                new_pos = self.scroll_start - distance
+            else:
+                new_pos = self.scroll_start + distance
+
+            if new_pos > max_pos:
+                new_pos = max_pos
+            elif new_pos < min_pos:
+                new_pos = min_pos
+
+            scroller.props.hadjustment.props.value = new_pos
 
     def do_autoselection(self):
         autoselectors = self.to_auto_select
@@ -125,8 +430,8 @@ class Interface(object):
         win = self.app.props.active_window
         if not win:
             win = Gtk.ApplicationWindow.new(app)
-            win.props.default_height = 300
-            win.props.default_width = 600
+            win.props.default_height = 480
+            # win.props.default_width = 640
             tb = Gtk.HeaderBar.new()
             mb = Gtk.MenuButton.new()
             mb.props.primary = True
@@ -208,14 +513,32 @@ class Interface(object):
             self.main_box.props.vexpand = True
             self.main_box.props.vexpand_set = True
 
-            self.scroller = Gtk.ScrolledWindow.new()
-            self.scroller.props.propagate_natural_height = True
+            self.hscroller = Gtk.ScrolledWindow.new()
+            self.hscroller.props.propagate_natural_height = True
 
-            hbox_spacing = 5
-            self.hbox = Gtk.Box.new(Gtk.Orientation.HORIZONTAL, hbox_spacing)
-            self.hbox.props.margin_top = hbox_spacing
-            self.hbox.props.margin_start = hbox_spacing
-            self.hbox.props.margin_end = hbox_spacing
+            hfactory = Gtk.SignalListItemFactory.new()
+            hfactory.connect("setup", self._on_hfactory_setup)
+            hfactory.connect("bind", self._on_hfactory_bind)
+            hfactory.connect("unbind", self._on_hfactory_unbind)
+            hfactory.connect("teardown", self._on_hfactory_teardown)
+
+            self.panner = Gtk.GesturePan(orientation=Gtk.Orientation.HORIZONTAL, n_points=1)
+            self.panner.connect("pan", self.do_pan)
+            self.panner.connect("drag-begin", self.record_start)
+            self.panner.connect("drag-end", self.pan_done)
+
+            self.hscroller.add_controller(self.panner)
+
+            self.hlist = Gtk.ListView.new(Gtk.NoSelection.new(self.plot_model), hfactory)
+            self.hlist.props.orientation = Gtk.Orientation.HORIZONTAL
+            self.hlist.props.show_separators = True
+
+            # hbox_spacing = 5
+            # self.hbox = Gtk.Box.new(Gtk.Orientation.HORIZONTAL, hbox_spacing)
+            # self.hbox.props.margin_top = hbox_spacing
+            # self.hbox.props.margin_start = hbox_spacing
+            # self.hbox.props.margin_end = hbox_spacing
+
             # self.flower = Gtk.FlowBox.new()
             # self.flower.props.max_children_per_line = self.max_plots
             # self.flower.props.min_children_per_line = self.max_plots
@@ -228,41 +551,51 @@ class Interface(object):
             # self.smus_box.props.margin_bottom = 5
             # self.main_box.append(self.smus_box)
 
-            self.scroller.set_child(self.hbox)
-            self.main_box.append(self.scroller)
+            self.hscroller.set_child(self.hlist)
+            self.main_box.append(self.hscroller)
 
             # sep = Gtk.Seperator.new(Gtk.Orientation.HORIZONTAL)
             self.main_box.append(Gtk.Separator.new(Gtk.Orientation.HORIZONTAL))
 
-            self.cv = Gtk.ColumnView.new(Gtk.NoSelection.new())
-            self.cv.props.halign = Gtk.Align.CENTER
+            cv = Gtk.ColumnView.new(Gtk.MultiSelection.new(self.row_model))
+            # TODO: work out how to sort by clicking
+            # cv.props.model = Gtk.MultiSelection.new(Gtk.SortListModel.new(self.row_model, cv.props.sorter))
+            cv.props.show_row_separators = True
+            cv.props.show_column_separators = True
+            cv.props.reorderable = False
+            # cv.props.sorter = Gtk.StringSorter.new()
+            cv.props.vexpand = True
+            cv.props.enable_rubberband = True
+            cv.props.halign = Gtk.Align.CENTER
 
-            col_defs = [
-                ("user_label", "Label"),
-                ("slot", "Slot"),
-                ("pad", "Pad"),
-                ("run_id", "Run ID"),
-                ("user", "User"),
-                ("area", "Area[cm^2]"),
-                ("dark_area", "Dark Area[cm^2]"),
-                ("voc_ss", "V_oc[V]"),
-                ("jsc_ss", "J_sc[mA/cm^2]"),
-                ("pmax_ss", "P_max[mW/cm^2]"),
-            ]
-            self.cols = []
+            for col_def in DataRow.col_defs:
+                factory = Gtk.SignalListItemFactory.new()
+                factory.connect("setup", self._on_factory_setup)
+                factory.connect("bind", self._on_factory_bind, col_def["name"])
+                factory.connect("unbind", self._on_factory_unbind)
+                factory.connect("teardown", self._on_factory_teardown)
+                cvc = Gtk.ColumnViewColumn.new(title=col_def["title"], factory=factory)
+                if col_def["width"]:
+                    cvc.props.fixed_width = col_def["width"]
+                else:
+                    cvc.props.expand = True
+                cvc.props.resizable = True
+                # cvc.props.sorter = Gtk.StringSorter.new()
+                cv.append_column(cvc)
 
-            for name, title in col_defs:
-                a_dict = {}
-                a_dict["title"] = title
-                a_dict["name"] = name
-                a_dict["store"] = Gio.ListStore.new(AString)
-                a_dict["slm"] = Gtk.NoSelection.new(a_dict["store"])
-                # TODO: make the SignalListItemFactory for this col to generate Gtk.Inscription items for the cells
-                a_dict["cvc"] = Gtk.ColumnViewColumn.new(a_dict["title"])
-                self.cv.append_column(a_dict["cvc"])
-                self.cols.append(a_dict)
+            sw = Gtk.ScrolledWindow.new()
+            # sw.props.height_request = 600
+            # sw.props.min_content_width = -1
+            # sw.props.max_content_width = -1
+            # sw.props.min_content_width = 800
+            sw.props.propagate_natural_width = True
+            sw.props.child = cv
+            self.main_box.append(sw)
 
-            self.main_box.append(self.cv)
+            # btn = Gtk.Button.new_with_label("Add Rows")
+            # btn.connect("clicked", self.add_rows)
+            # self.main_box.prepend(btn)
+
             # self.set_homogeneous = True
             # self.main_box.append(self.canvas)
             # self.main_box.append(Gtk.Label.new("Hai!"))
@@ -296,6 +629,100 @@ class Interface(object):
             self.do_autoselection()
 
         win.present()
+
+    # def add_rows(self, btn):
+    #    n = 10
+    #    for i in range(n):
+    #        self.row_model.append(DataRow())
+
+    @staticmethod
+    def counter_sequence(start: int = 0) -> Generator[int, int | None, None]:
+        """infinite upwards integer sequence generator"""
+        c = start
+        while True:
+            yield c
+            c += 1
+
+    # def was_mapped(self, *args):
+    #     print(f"MAP! {args}")
+
+    # def was_unmapped(self, *args):
+    #     print(f"UNMAP! {args}")
+
+    def _on_hfactory_setup(self, factory, list_item):
+        pass
+        # height = 250  # in pixels on the gui
+        # a_plot = list_item.get_item()
+
+        # figsize = (6.4, 4.8)  # inches for matplotlib
+        # self.fig = Figure(figsize=figsize, dpi=100, layout="constrained")
+        # ax = self.fig.add_subplot()
+        # ax.set_title("hello")
+        # widget = FigureCanvas(self.fig)
+        # plot_widget = Gtk.Label.new("john")
+        # plot_widget.content_width = int(height * (figsize[0] / figsize[1]))
+        # plot_widget.content_height = height
+        # widget.props.height_request = height
+        # widget.props.width_request = int(height * (figsize[0] / figsize[1]))
+        # plot_widget.vexpand = False
+        # plot_widget.hexpand = False
+        # self.widget._binding = None
+
+        # list_item.set_child(a_plot.props.plot_widget)
+        # canvas = FigureCanvas(Figure(layout="constrained"))
+        # canvas._binding = None
+        # list_item.set_child(canvas)
+        # if self.asw.props.state:
+        #    GLib.idle_add(self.minscroll)
+        # plot_widget.draw_idle()
+        # fig.canvas.draw_idle()
+
+    def _on_hfactory_bind(self, factory, list_item):
+        a_plot = list_item.get_item()
+
+        canvas = FigureCanvas(a_plot.fig)
+        # canvas.props.content_width = a_plot.fig.bbox.bounds[2]
+        # canvas.props.content_height = a_plot.fig.bbox.bounds[3]
+
+        canvas._binding = a_plot.bind_property("width_px", canvas, "content_width", GObject.BindingFlags.SYNC_CREATE)
+        canvas._binding = a_plot.bind_property("height_px", canvas, "content_height", GObject.BindingFlags.SYNC_CREATE)
+        # canvas.connect("map", self.was_mapped)
+        # canvas.connect("unmap", self.was_unmapped)
+        list_item.set_child(canvas)
+
+    def _on_hfactory_unbind(self, factory, list_item):
+        canvas = list_item.get_child()
+        if canvas._binding:
+            canvas._binding.unbind()
+            # canvas.disconnect("map")
+            # canvas.disconnect("unmap")
+            canvas._binding = None
+
+    def _on_hfactory_teardown(self, factory, list_item):
+        canvas = list_item.get_child()
+        if canvas:
+            canvas._binding = None
+
+    def _on_factory_setup(self, factory, list_item):
+        cell = Gtk.Inscription()
+        cell._binding = None
+        list_item.set_child(cell)
+
+    def _on_factory_bind(self, factory, list_item, what):
+        cell = list_item.get_child()
+        data_row = list_item.get_item()
+        cell._binding = data_row.bind_property(what, cell, "text", GObject.BindingFlags.SYNC_CREATE)
+
+    def _on_factory_unbind(self, factory, list_item):
+        cell = list_item.get_child()
+        if cell._binding:
+            cell._binding.unbind()
+            cell._binding = None
+
+    def _on_factory_teardown(self, factory, list_item):
+        cell = list_item.get_child()
+        if cell:
+            cell._binding = None
 
     def pbl_area_prepared(self, pb_loader, user_data):
         if not self.pbls_init[user_data]:
@@ -396,6 +823,76 @@ class Interface(object):
     def handle_db_data(self, vals):
         for v in vals:
             this_chan = v["channel"]
+            raw_dat = False
+            event_dat = False
+            new_plot = False
+            if "raw" in this_chan:
+                raw_dat = True
+                eid = v["eid"]
+            elif "events" in this_chan:
+                event_dat = True
+                eid = v["id"]
+            else:
+                print("Message in unknown channel")
+                continue  # bail out if we don't understand the channel
+
+            eid_str = str(eid)
+            if eid_str not in self.event_id_to_plot_model_mapping:
+                if event_dat:
+                    did_str = str(v["device_id"])
+                    rid = v["run_id"]
+                    if did_str not in self.known_devices:
+                        self.fetch_dev_deets(rid)
+                    td = self.known_devices[did_str]  # this device
+                    if "tbl_sweep_events" in this_chan:
+                        did = v["device_id"]
+                        did_str = str(did)
+                        # handle the case we want to group data from different jvs into the same plot
+                        if did_str not in self.device_jv_event_groups:
+                            pm = APlot(event_line=v, this_device=td)
+                            new_plot = True
+                            self.plot_model.append(pm)
+                            mod_index = len(self.plot_model) - 1
+                            self.event_id_to_plot_model_mapping[eid_str] = mod_index
+                            self.device_jv_event_groups[did_str] = (mod_index, [eid])
+                        else:
+                            self.event_id_to_plot_model_mapping[eid_str] = self.device_jv_event_groups[did_str][0]
+                            self.device_jv_event_groups[did_str][1].append(eid)
+                            pm = self.plot_model[self.device_jv_event_groups[did_str][0]]
+                    else:
+                        pm = APlot(event_line=v, this_device=td)
+                        new_plot = True
+                        self.plot_model.append(pm)
+                        mod_index = len(self.plot_model) - 1
+                        # self.plot_model.insert(0, a_plot)
+                        self.event_id_to_plot_model_mapping[eid_str] = mod_index
+                else:
+                    continue  # bail out if this is raw data for an event we missed the intro to
+            else:
+                pm = self.plot_model[self.event_id_to_plot_model_mapping[eid_str]]
+            # pm_first_event = next(iter(pm.event_metadata.values()))
+            # did_str = str(pm_first_event["device_id"])
+            # if did_str not in self.known_devices:
+            #     self.fetch_dev_deets(pm_first_event["run_id"])
+            # td = self.known_devices[did_str]  # this device
+            # if not pm.this_device:
+            #     pm.register_dev_info(td)
+
+            if raw_dat:
+                pm.add_data(eid, (v["v"], v["i"], v["t"], v["s"]))
+                continue
+
+            if event_dat:
+                pm.register_event(v)
+
+            if new_plot:
+                if self.asw.props.state:  # if the autoscroll switch is on, scroll all the way to the right
+                    # GLib.idle_add(self.minscroll)
+                    GLib.idle_add(self.maxscroll)
+
+    def handle_db_data2(self, vals):
+        for v in vals:
+            this_chan = v["channel"]
             if "raw" in this_chan:
                 eid = v["eid"]
                 if str(eid) in self.expecting:
@@ -430,7 +927,7 @@ class Interface(object):
                         for axnx in ax:
                             axnx.relim()
                             axnx.autoscale()
-                        fig.canvas.draw_idle()
+                        # fig.canvas.draw_idle()
                     elif "ss" in this_chan:
                         t0 = expecdict["data"][0][2]
                         t = [x[2] - t0 for x in expecdict["data"]]
@@ -445,7 +942,7 @@ class Interface(object):
                         # prepare the axes and queue up the redraw
                         ax.relim()
                         ax.autoscale()
-                        fig.canvas.draw_idle()
+                        # fig.canvas.draw_idle()
             elif "events" in this_chan:
                 eid = v["id"]
                 did = v["device_id"]
@@ -453,22 +950,22 @@ class Interface(object):
 
                 # if it's a new run, let's freshen some stuff
                 # TODO: figure out why this isn't cleaning things up properly
-                if self.last_run and (rid != self.last_run):
-                    self.last_run = rid
-                    del self.did_possibly_mid_series
-                    del self.expecting
-                    del self.known_devices
-                    for h_widget in self.h_widgets:
-                        self.hbox.remove(h_widget)
-                    del self.h_widgets
-                    gc.collect()
-                    self.expecting = {}
-                    self.known_devices = {}
-                    self.h_widgets = []
-                    self.did_possibly_mid_series = set()
+                # if self.last_run and (rid != self.last_run):
+                #    self.last_run = rid
+                #    del self.did_possibly_mid_series
+                #    del self.expecting
+                #    del self.known_devices
+                #    for h_widget in self.h_widgets:
+                #        self.hbox.remove(h_widget)
+                #    del self.h_widgets
+                #    gc.collect()
+                #    self.expecting = {}
+                #    self.known_devices = {}
+                #    self.h_widgets = []
+                #    self.did_possibly_mid_series = set()
 
                 # if we've never seen this device before, fetch all of them for the run and add them to our known devices
-                if did not in self.known_devices:
+                if str(did) not in self.known_devices:
                     self.fetch_dev_deets(rid)
 
                 td = self.known_devices[str(did)]  # this device
@@ -494,7 +991,7 @@ class Interface(object):
                     if thing != "Unknown":
                         if self.n_plots >= self.max_plots:
                             to_remove = self.h_widgets.pop(0)  # remove from the front
-                            self.hbox.remove(to_remove)
+                            # self.hbox.remove(to_remove)
                             self.n_plots -= 1
                         self.n_plots += 1
                         height = 250  # in pixels on the gui
@@ -516,6 +1013,9 @@ class Interface(object):
                                         new_plot = False
                                         break
                             if new_plot:
+                                a_plot = APlot(channel=this_chan, title="e")
+                                # self.plot_model.append(a_plot)
+                                self.plot_model.insert(0, a_plot)
                                 ax = fig.add_subplot()
                                 title = f"J-Vs: {dev_name}"
                                 xlab = "Voltage [V]"
@@ -595,27 +1095,32 @@ class Interface(object):
                             ax.set_ylabel(ylab)
                             ax.grid(True)
 
-                        if new_plot:
-                            w = FigureCanvas(fig)
-                            w.props.content_width = int(height * (figsize[0] / figsize[1]))
-                            w.props.content_height = height
-                            # w.props.height_request = -1
-                            # w.props.width_request = -1
-                            w.props.vexpand = False
-                            w.props.hexpand = False
+                        # if new_plot:
+                        # pass
+                        # w = FigureCanvas(fig)
+                        # w.props.content_width = int(height * (figsize[0] / figsize[1]))
+                        # w.props.content_height = height
+                        # w.props.height_request = -1
+                        # w.props.width_request = -1
+                        # w.props.vexpand = False
+                        # w.props.hexpand = False
 
-                            self.hbox.append(w)
-                            self.h_widgets.append(w)
+                        # self.hbox.append(w)
+                        # self.h_widgets.append(w)
+                        # a_plot = APlot()
+                        # self.plot_model.append(a_plot)
+                        # self.plot_model.insert(0, a_plot)
 
-                            if self.asw.props.state:  # if the autoscroll switch is on, scroll all the way to the right
-                                GLib.idle_add(self.maxscroll)
-                        else:  # we're skipping making a new plot for this one
-                            w = None
+                        # if self.asw.props.state:  # if the autoscroll switch is on, scroll all the way to the right
+                        #    GLib.idle_add(self.minscroll)
+                        #    GLib.idle_add(self.maxscroll)
+                        # else:  # we're skipping making a new plot for this one
+                        #    w = None
 
                         # self.hbox.prepend(w)
                         # self.h_widgets.insert(0, w)
 
-                        new_one = {"widget": w, "fig": fig, "lns": lns, "ax": ax, "did": did, "area": v["effective_area"], "data": []}
+                        new_one = {"widget": None, "fig": fig, "lns": lns, "ax": ax, "did": did, "area": v["effective_area"], "data": []}
                         self.expecting[str(eid)] = new_one  # register a new expecdict to catch data we get for it
                 else:  # complete
                     what = "done."
@@ -672,7 +1177,8 @@ class Interface(object):
                                 ax.relim()
                                 ax.autoscale()
                             if fig:
-                                fig.canvas.draw_idle()
+                                pass
+                                # fig.canvas.draw_idle()
 
                             # drop expecdicts when it's safe (they're not involved in an ongoing sweep-series)
                             drop_these = []
@@ -696,12 +1202,16 @@ class Interface(object):
             self.tol.add_toast(toast)
             self.expecting = {}
 
+    def minscroll(self):
+        """move the scroll bar all the way to the left"""
+        self.hscroller.props.hadjustment.props.value = 0
+
     def maxscroll(self):
         """move the scroll bar all the way to the right"""
-        cv = self.scroller.props.hadjustment.props.value  # check where we are now
-        mv = self.scroller.props.hadjustment.props.upper  # check the max value
+        cv = self.hscroller.props.hadjustment.props.value  # check where we are now
+        mv = self.hscroller.props.hadjustment.props.upper  # check the max value
         if cv != mv:  # only scroll if we need to
-            self.scroller.props.hadjustment.props.value = mv
+            self.hscroller.props.hadjustment.props.value = mv
 
     def new_plot(self, *args):
         # x = [d[0] for d in self.data]
@@ -796,10 +1306,8 @@ class Interface(object):
                             "area": record[5],
                             "dark_area": record[6],
                         }
-                        # TODO: insert the cells now
-                        # for col in self.cols:
-                        #    if col["name"] in rcd:
-                        #        col["store"].append(Gtk.Label.new(str(rcd[col["name"]])))
+                        data_row = DataRow(**rcd)
+                        self.row_model.append(data_row)
                         self.known_devices[str(id)] = rcd
         except Exception as e:
             print(f"Failure fething device details from the DB: {e}")
