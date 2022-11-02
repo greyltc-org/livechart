@@ -214,15 +214,17 @@ class APlot(GObject.Object):
             [child.remove() for child in ax.get_children() if isinstance(child, MPLAnnotation)]  # delete annotations
             if event_line["light"]:
                 lit = "light"
+                area = self.this_device["area"]
             else:
                 lit = "dark"
+                area = self.this_device["dark_area"]
             if event_line["from_setpoint"] < event_line["to_setpoint"]:
                 swp_dir = r"$\Longrightarrow$"
             else:
                 swp_dir = r"$\Longleftarrow$"
             (line,) = ax.plot(
                 [x[0] for x in self.event_data[eid_str]],
-                [x[1] * 1000 / self.this_device["area"] for x in self.event_data[eid_str]],
+                [x[1] * 1000 / area for x in self.event_data[eid_str]],
                 label=f"{lit}{swp_dir}",
                 marker="o",
                 linestyle="solid",
@@ -249,8 +251,9 @@ class DataRow(GObject.Object):
 
     __gtype_name__ = "DataRow"
     col_defs = [
-        {"name": "user", "title": "User", "width": 120},
-        {"name": "run_id", "title": "Run ID", "width": 80},
+        # {"name": "user", "title": "User", "width": 120},
+        # {"name": "run_id", "title": "Run ID", "width": 80},
+        {"name": "run_name", "title": "Run Name", "width": 140},
         {"name": "slot", "title": "Slot", "width": None},
         {"name": "pad", "title": "Pad", "width": None},
         {"name": "user_label", "title": "Label", "width": 120},
@@ -290,8 +293,8 @@ class DataRow(GObject.Object):
         return self._row_data["run_id"]
 
     @GObject.Property(type=str)
-    def user(self):
-        return self._row_data["user"]
+    def run_name(self):
+        return self._row_data["run_name"]
 
     @GObject.Property(type=str)
     def area(self):
@@ -1295,11 +1298,11 @@ class Interface(object):
         """updates known devices given a run id"""
         query1 = f"""
         select
-            tu.name user_name,
-            trd.device_id,
+            tr.name run_name,
+            trd.device_id device_id,
             tss.name slot,
+            tld.pad_no pad,
             ts.name user_label,
-            tld.pad_no,
             area(light_cir) area,
             area(dark_cir) dark_area
         from
@@ -1326,19 +1329,13 @@ class Interface(object):
                 with conn.cursor() as cur:
                     cur.execute(query1)
                     for record in cur:
-                        id = record[1]
-                        rcd = {
-                            "user": record[0],
-                            "run_id": rid,
-                            "slot": record[2],
-                            "user_label": record[3],
-                            "pad": record[4],
-                            "area": record[5],
-                            "dark_area": record[6],
-                        }
+                        rcd = {}
+                        for col, val in zip(cur.description, record):
+                            rcd[col.name] = val
+                        rcd["run_id"] = rid
                         data_row = DataRow(**rcd)
                         self.row_model.append(data_row)
-                        self.known_devices[str(id)] = rcd
+                        self.known_devices[str(rcd["device_id"])] = rcd
         except Exception as e:
             print(f"Failure fething device details from the DB: {e}")
 
