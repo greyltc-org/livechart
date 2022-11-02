@@ -21,6 +21,7 @@ from matplotlib import use as mpl_use
 mpl_use("module://mplcairo.gtk")
 from mplcairo.gtk import FigureCanvas
 from matplotlib.text import Annotation as MPLAnnotation
+from matplotlib.style import context as mpls_context
 from mpl_toolkits.axisartist.parasite_axes import HostAxes, ParasiteAxes
 
 # from matplotlib.backend_bases import FigureCanvasBase
@@ -62,82 +63,87 @@ class APlot(GObject.Object):
             figsize = (6.4, 4.8)  # inches for matplotlib
         ar = figsize[0] / figsize[1]
         self.px_width = ar * self.px_height
-        self.fig = Figure(figsize=figsize, dpi=100, layout="constrained")
-
-        if "tbl_mppt_events" in event_line["channel"]:
-            ax = []
-            ax.append(self.fig.add_axes([0.13, 0.15, 0.65, 0.74], axes_class=HostAxes))
-            ax.append(ParasiteAxes(ax[0], sharex=ax[0]))
-            ax.append(ParasiteAxes(ax[0], sharex=ax[0]))
-            ax[0].parasites.append(ax[1])
-            ax[0].parasites.append(ax[2])
-            ax[0].axis["right"].set_visible(False)
-
-            ax[1].axis["right"].set_visible(True)
-            ax[1].axis["right"].major_ticklabels.set_visible(True)
-            ax[1].axis["right"].label.set_visible(True)
-
-            ax[2].axis["right2"] = ax[2].new_fixed_axis(loc="right", offset=(50, 0))
-
-            lns = ax[0].plot([], marker="o", linestyle="solid", linewidth=2, markersize=3, markerfacecolor=(1, 1, 0, 0.5))
-            lns += ax[1].plot([], marker="o", linestyle="solid", linewidth=1, markersize=2, alpha=0.2)
-            lns += ax[2].plot([], marker="o", linestyle="solid", linewidth=1, markersize=2, alpha=0.2)
-
-            ax[1].set_ylabel("Voltage [mV]")
-            ax[2].set_ylabel(r"Current Density [$\mathregular{\frac{mA}{cm^2}}$]")
-
-            ax[0].yaxis.set_major_formatter("{x:.2f}")
-            ax[1].yaxis.set_major_formatter("{x:.0f}")
-            ax[2].yaxis.set_major_formatter("{x:.1f}")
-
-            ax[0].axis["left"].label.set_color(lns[0].get_color())
-            ax[1].axis["right"].label.set_color(lns[1].get_color())
-            ax[2].axis["right2"].label.set_color(lns[2].get_color())
-
-            title = f"MPPT: {dev_name}"
-            xlab = "Time [s]"
-            ylab = r"Power Density [$\mathregular{\frac{mW}{cm^2}}$]"
-        elif "tbl_sweep_events" in event_line["channel"]:
-            ax = self.fig.add_subplot()
-            title = f"J-Vs: {dev_name}"
-            xlab = "Voltage [V]"
-            ylab = r"Current Density [$\mathregular{\frac{mA}{cm^2}}$]"
-            ax.axhline(0, color="black")
-            ax.axvline(0, color="black")
-            ax.annotate("Collecting Data...", xy=(0.5, 0.5), xycoords="axes fraction", va="center", ha="center", bbox=dict(boxstyle="round", fc="chartreuse"))
-            lns = None
-        elif "tbl_ss_events" in event_line["channel"]:
-            ax = self.fig.add_subplot()
-            title = f"Steady State: {dev_name}"
-            xlab = "Time [s]"
-            if event_line["fixed"] == 1:
-                led_txt = f'Current Fixed @ {event_line["setpoint"]}[mA]'
-                ylab = "Voltage [mV]"
-            else:
-                led_txt = f'Voltage Fixed @ {event_line["setpoint"]}[V]'
-                ylab = r"Current Density [$\mathregular{\frac{mA}{cm^2}}$]"
-            lns = ax.plot([], label=led_txt, marker="o", linestyle="solid", linewidth=1, markersize=2, markerfacecolor=(1, 1, 0, 0.5))
-            ax.legend()
+        if this_device["good_contact"]:
+            style = "default"
         else:
-            ax = self.fig.add_subplot()
-            title = "Unknown"
-            xlab = ""
-            ylab = ""
-            lns = ax.plot([], marker="o", linestyle="solid", linewidth=1, markersize=2, markerfacecolor=(1, 1, 0, 0.5))
+            style = "ggplot"
+        with mpls_context(style):
+            self.fig = Figure(figsize=figsize, dpi=100, layout="constrained")
 
-        if isinstance(ax, list):
-            # ax[2].annotate("Collecting Data...", xy=(0.5, 0.5), xycoords="axes fraction", va="center", ha="center", bbox=dict(boxstyle="round", fc="chartreuse"))
-            ax[0].set_title(title)
-            ax[0].set_xlabel(xlab)
-            ax[0].set_ylabel(ylab)
-            ax[0].grid(True)
-        elif ax:
-            ax.set_title(title)
-            ax.set_xlabel(xlab)
-            ax.set_ylabel(ylab)
-            ax.grid(True)
+            if "tbl_mppt_events" in event_line["channel"]:
+                ax = []
+                ax.append(self.fig.add_axes([0.13, 0.15, 0.65, 0.74], axes_class=HostAxes))
+                ax.append(ParasiteAxes(ax[0], sharex=ax[0]))
+                ax.append(ParasiteAxes(ax[0], sharex=ax[0]))
+                ax[0].parasites.append(ax[1])
+                ax[0].parasites.append(ax[2])
+                ax[0].axis["right"].set_visible(False)
 
-        self.register_event(event_line)
+                ax[1].axis["right"].set_visible(True)
+                ax[1].axis["right"].major_ticklabels.set_visible(True)
+                ax[1].axis["right"].label.set_visible(True)
+
+                ax[2].axis["right2"] = ax[2].new_fixed_axis(loc="right", offset=(50, 0))
+
+                lns = ax[0].plot([], marker="o", linestyle="solid", linewidth=2, markersize=3, markerfacecolor=(1, 1, 0, 0.5))
+                lns += ax[1].plot([], marker="o", linestyle="solid", linewidth=1, markersize=2, alpha=0.2)
+                lns += ax[2].plot([], marker="o", linestyle="solid", linewidth=1, markersize=2, alpha=0.2)
+
+                ax[1].set_ylabel("Voltage [mV]")
+                ax[2].set_ylabel(r"Current Density [$\mathregular{\frac{mA}{cm^2}}$]")
+
+                ax[0].yaxis.set_major_formatter("{x:.2f}")
+                ax[1].yaxis.set_major_formatter("{x:.0f}")
+                ax[2].yaxis.set_major_formatter("{x:.1f}")
+
+                ax[0].axis["left"].label.set_color(lns[0].get_color())
+                ax[1].axis["right"].label.set_color(lns[1].get_color())
+                ax[2].axis["right2"].label.set_color(lns[2].get_color())
+
+                title = f"MPPT: {dev_name}"
+                xlab = "Time [s]"
+                ylab = r"Power Density [$\mathregular{\frac{mW}{cm^2}}$]"
+            elif "tbl_sweep_events" in event_line["channel"]:
+                ax = self.fig.add_subplot()
+                title = f"J-Vs: {dev_name}"
+                xlab = "Voltage [V]"
+                ylab = r"Current Density [$\mathregular{\frac{mA}{cm^2}}$]"
+                ax.axhline(0, color="black")
+                ax.axvline(0, color="black")
+                ax.annotate("Collecting Data...", xy=(0.5, 0.5), xycoords="axes fraction", va="center", ha="center", bbox=dict(boxstyle="round", fc="chartreuse"))
+                lns = None
+            elif "tbl_ss_events" in event_line["channel"]:
+                ax = self.fig.add_subplot()
+                title = f"Steady State: {dev_name}"
+                xlab = "Time [s]"
+                if event_line["fixed"] == 1:
+                    led_txt = f'Current Fixed @ {event_line["setpoint"]}[mA]'
+                    ylab = "Voltage [mV]"
+                else:
+                    led_txt = f'Voltage Fixed @ {event_line["setpoint"]}[V]'
+                    ylab = r"Current Density [$\mathregular{\frac{mA}{cm^2}}$]"
+                lns = ax.plot([], label=led_txt, marker="o", linestyle="solid", linewidth=1, markersize=2, markerfacecolor=(1, 1, 0, 0.5))
+                ax.legend()
+            else:
+                ax = self.fig.add_subplot()
+                title = "Unknown"
+                xlab = ""
+                ylab = ""
+                lns = ax.plot([], marker="o", linestyle="solid", linewidth=1, markersize=2, markerfacecolor=(1, 1, 0, 0.5))
+
+            if isinstance(ax, list):
+                # ax[2].annotate("Collecting Data...", xy=(0.5, 0.5), xycoords="axes fraction", va="center", ha="center", bbox=dict(boxstyle="round", fc="chartreuse"))
+                ax[0].set_title(title)
+                ax[0].set_xlabel(xlab)
+                ax[0].set_ylabel(ylab)
+                ax[0].grid(True)
+            elif ax:
+                ax.set_title(title)
+                ax.set_xlabel(xlab)
+                ax.set_ylabel(ylab)
+                ax.grid(True)
+
+            self.register_event(event_line)
 
     @GObject.Property(type=GObject.TYPE_INT)
     def width_px(self):
@@ -262,6 +268,7 @@ class DataRow(GObject.Object):
         {"name": "voc_ss", "title": "V_oc[V]", "width": 100},
         {"name": "jsc_ss", "title": "J_sc[mA/cm^2]", "width": None},
         {"name": "pmax_ss", "title": "P_max[mW/cm^2]", "width": None},
+        {"name": "good_contact", "title": "Contact Good", "width": None},
     ]
 
     def __init__(self, **kwargs):
@@ -316,6 +323,24 @@ class DataRow(GObject.Object):
     def pmax_ss(self):
         return self._row_data["pmax_ss"]
 
+    @GObject.Property(type=str)
+    def good_contact(self):
+        return self._row_data["good_contact"]
+
+
+# class Options(GObject.Object):
+#     """stores options chosen in the prefs dialog"""
+
+#     __gtype_name__ = "Options"
+#     set_reset_with_run: bool | None = None
+
+#     def __init__(self, **kwargs):
+#         super().__init__()
+
+#     @GObject.Property(type=str)
+#     def reset_with_run(self):
+#         return self.set_reset_with_run
+
 
 class Interface(object):
     app = None
@@ -341,6 +366,8 @@ class Interface(object):
     counter = 0
     event_id_to_plot_model_mapping: dict[str, int] = {}  # given an event ID, which plot model index should we use
     device_jv_event_groups = {}  # given a device id, which jv event IDs dies it have?
+    rrr_check: Gtk.CheckButton | None = None
+    # options: Options
 
     # charts = {}
     # lb = {}  # latest bytes
@@ -349,7 +376,7 @@ class Interface(object):
     to_auto_select = ["event", "raw", "run"]  # if a channel name contains any of these strings, auto select it for listening
     max_expecting = 16  # no more than this many outstanding event ids can be
     db_schema_dot = ""
-    last_run = None
+    last_run: int | None = None
 
     def __init__(self):
         self.h_widgets = []  # container for horizontal box children
@@ -357,6 +384,7 @@ class Interface(object):
         self.known_devices = {}  # construct for holding stuff we know about devices
         self.did_possibly_mid_series = set()  # device IDs that are possibly mid-sweep series
         self.countsup = Interface.counter_sequence()
+        # self.options = Options()
 
         app_id = "org.greyltc.livechart"
         self.app = Gtk.Application(application_id=app_id, flags=Gio.ApplicationFlags.FLAGS_NONE)
@@ -420,6 +448,7 @@ class Interface(object):
                 new_pos = min_pos
 
             scroller.props.hadjustment.props.value = new_pos
+            # print("changed in do pan")
 
     def do_autoselection(self):
         autoselectors = self.to_auto_select
@@ -462,6 +491,9 @@ class Interface(object):
             dbtn.connect("clicked", self.on_dsc_btn_clicked)
             dbtn.props.tooltip_markup = "Disconnect from backend"
             tb.pack_start(dbtn)
+
+            self.rrr_check = Gtk.CheckButton.new_with_label("Reset on New Run")
+            self.rrr_check.props.active = True
 
             # lbl = Gtk.Label.new("Value=")
             # tb.pack_start(lbl)
@@ -644,7 +676,8 @@ class Interface(object):
 
     def scroll_switch_state_change(self, switch, state):
         if state:
-            self.hscroller.props.hadjustment.set_value(self.hscroller.props.hadjustment.props.upper - self.hscroller.props.hadjustment.props.page_size)
+            self.hscroller.props.hadjustment.props.value = self.hscroller.props.hadjustment.props.upper - self.hscroller.props.hadjustment.props.page_size
+            # print("changed in scroll_switch_state_change")
             try:
                 self.panner.disconnect_by_func(self.do_pan)
             except:
@@ -667,6 +700,7 @@ class Interface(object):
         """pins the scroll bar to the right"""
         scroll_later = lambda hadjustment: hadjustment.set_value(hadjustment.props.upper - hadjustment.props.page_size)
         GLib.idle_add(scroll_later, hadjustment)
+        # print("changed in scroll later")
         # max = hadjustment.props.upper - hadjustment.props.page_size
         # hadjustment.set_value(max)
         # print(f"loc = {hadjustment.props.value}")
@@ -879,6 +913,16 @@ class Interface(object):
             elif "events" in this_chan:
                 event_dat = True
                 eid = v["id"]
+                rid = v["run_id"]
+                if self.last_run != rid:
+                    if (self.last_run is not None) and (self.rrr_check.props.active):
+                        # reset everything for new run
+                        self.row_model.remove_all()
+                        self.plot_model.remove_all()
+                        self.event_id_to_plot_model_mapping = {}
+                        self.device_jv_event_groups = {}
+                        self.known_devices = {}
+                    self.last_run = rid
             else:
                 print("Message in unknown channel")
                 continue  # bail out if we don't understand the channel
@@ -1235,16 +1279,16 @@ class Interface(object):
             self.tol.add_toast(toast)
             self.expecting = {}
 
-    def minscroll(self):
-        """move the scroll bar all the way to the left"""
-        self.hscroller.props.hadjustment.props.value = 0
+    # def minscroll(self):
+    #     """move the scroll bar all the way to the left"""
+    #     self.hscroller.props.hadjustment.props.value = 0
 
-    def maxscroll(self):
-        """move the scroll bar all the way to the right"""
-        cv = self.hscroller.props.hadjustment.props.value  # check where we are now
-        mv = self.hscroller.props.hadjustment.props.upper  # check the max value
-        if cv != mv:  # only scroll if we need to
-            self.hscroller.props.hadjustment.props.value = mv
+    # def maxscroll(self):
+    #     """move the scroll bar all the way to the right"""
+    #     cv = self.hscroller.props.hadjustment.props.value  # check where we are now
+    #     mv = self.hscroller.props.hadjustment.props.upper  # check the max value
+    #     if cv != mv:  # only scroll if we need to
+    #         self.hscroller.props.hadjustment.props.value = mv
 
     def new_plot(self, *args):
         # x = [d[0] for d in self.data]
@@ -1303,16 +1347,18 @@ class Interface(object):
             tss.name slot,
             tld.pad_no pad,
             ts.name user_label,
-            area(light_cir) area,
-            area(dark_cir) dark_area
+            area(tld.light_cir) area,
+            area(tld.dark_cir) dark_area,
+            tcc.pass good_contact
         from
             {self.db_schema_dot}tbl_run_devices trd
-        join {self.db_schema_dot}tbl_devices on
-            tbl_devices.id = device_id
+        join org_greyltc.tbl_devices td on
+            td.id = device_id
         join {self.db_schema_dot}tbl_substrates ts on
             ts.id = substrate_id
         join {self.db_schema_dot}tbl_slot_substrate_run_mappings tssrm on
             tssrm.substrate_id = ts.id
+            and tssrm.run_id = trd.run_id
         join {self.db_schema_dot}tbl_layout_devices tld on
             tld.id = layout_device_id
         join {self.db_schema_dot}tbl_setup_slots tss on
@@ -1321,6 +1367,10 @@ class Interface(object):
             tr.id = trd.run_id
         join {self.db_schema_dot}tbl_users tu on
             tu.id = tr.user_id
+        join {self.db_schema_dot}tbl_contact_checks tcc on
+            tcc.run_id = trd.run_id
+            and tcc.setup_slot_id = tss.id
+            and tcc.pad_name = tld.pad_no::text
         where
             trd.run_id = {rid}
         """
@@ -1333,8 +1383,7 @@ class Interface(object):
                         for col, val in zip(cur.description, record):
                             rcd[col.name] = val
                         rcd["run_id"] = rid
-                        data_row = DataRow(**rcd)
-                        self.row_model.append(data_row)
+                        self.row_model.append(DataRow(**rcd))
                         self.known_devices[str(rcd["device_id"])] = rcd
         except Exception as e:
             print(f"Failure fething device details from the DB: {e}")
@@ -1375,10 +1424,11 @@ class Interface(object):
         pd.set_default_response(Gtk.ResponseType.OK)
         content_box = pd.get_content_area()
         content_box.props.orientation = Gtk.Orientation.VERTICAL
-        content_box.props.spacing = 5
-        content_box.props.margin_top = 5
-        content_box.props.margin_start = 5
-        content_box.props.margin_end = 5
+        content_box.props.spacing = 12
+        content_box.props.margin_top = 6
+        content_box.props.margin_bottom = 6
+        content_box.props.margin_start = 12
+        content_box.props.margin_end = 12
 
         margin = 5
         need_margins = [ok_but, cancel_but]
@@ -1441,6 +1491,10 @@ class Interface(object):
         lfl.props.label = "Channels to Listen On"
         lf.props.label_widget = lfl
         lb = Gtk.Box.new(Gtk.Orientation.VERTICAL, box_spacing)
+        lb.props.margin_start = 5
+        lb.props.margin_end = 5
+        # lb.props.margin_top = 6
+        lb.props.margin_bottom = 5
 
         # chanlinebox = Gtk.Box.new(Gtk.Orientation.HORIZONTAL, box_spacing)
         # chan_lbl = Gtk.Label.new("<b>Select Listen Channels: </b>")
@@ -1458,11 +1512,11 @@ class Interface(object):
         lcb.connect("clicked", self.fetch_channels, channel_listbox)
         lb.append(lcb)
 
-        lb.props.margin_start = 5
-        lb.props.margin_end = 5
-        lb.props.margin_bottom = 5
         lf.props.child = lb
         content_box.append(lf)
+
+        # data_row.bind_property(what, cell, "text", GObject.BindingFlags.SYNC_CREATE)
+        content_box.append(self.rrr_check)
 
         pd.connect("response", self.on_prefs_response, channel_listbox)
         pd.present()
@@ -1505,16 +1559,16 @@ class Interface(object):
             self.db_schema_dot = f"{schemas.pop()}."
             aconn = None
             try:
-                aconn = await asyncio.create_task(psycopg.AsyncConnection.connect(conninfo=dbw.db_uri, autocommit=True), name="connect")
+                aconn = await asyncio.create_task(psycopg.AsyncConnection.connect(conninfo=self.db_url, autocommit=True), name="connect")
                 await aconn.set_read_only(True)
-                toast_text = f"Connected to {dbw.db_uri}"
+                toast_text = f"Connected to {self.db_url}"
             except Exception as e:
                 toast_text = f"Connection failure: {e}"
             toast = Adw.Toast.new(toast_text)
             toast.props.timeout = 3
             self.tol.add_toast(toast)
 
-            if hasattr(aconn, "closed") and (not aconn.closed):
+            if aconn and (not aconn.closed):
                 async with aconn:
                     async with aconn.cursor() as acur:
                         q_task = asyncio.create_task(q_getter(dbw.outq), name="q")
