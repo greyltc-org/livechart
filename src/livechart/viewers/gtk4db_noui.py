@@ -63,87 +63,85 @@ class APlot(GObject.Object):
             figsize = (6.4, 4.8)  # inches for matplotlib
         ar = figsize[0] / figsize[1]
         self.px_width = ar * self.px_height
-        if this_device["good_contact"]:
-            style = "default"
-        else:
-            style = "dark_background"
-        with mpls_context(style):
-            self.fig = Figure(figsize=figsize, dpi=100, layout="constrained")
 
-            if "tbl_mppt_events" in event_line["channel"]:
-                ax = []
-                ax.append(self.fig.add_axes([0.13, 0.15, 0.65, 0.74], axes_class=HostAxes))
-                ax.append(ParasiteAxes(ax[0], sharex=ax[0]))
-                ax.append(ParasiteAxes(ax[0], sharex=ax[0]))
-                ax[0].parasites.append(ax[1])
-                ax[0].parasites.append(ax[2])
-                ax[0].axis["right"].set_visible(False)
+        self.fig = Figure(figsize=figsize, dpi=100, layout="constrained")
+        if not this_device["good_contact"]:
+            self.fig.patch.set_facecolor("LightYellow")
 
-                ax[1].axis["right"].set_visible(True)
-                ax[1].axis["right"].major_ticklabels.set_visible(True)
-                ax[1].axis["right"].label.set_visible(True)
+        if "tbl_mppt_events" in event_line["channel"]:
+            ax = []
+            ax.append(self.fig.add_axes([0.13, 0.15, 0.65, 0.74], axes_class=HostAxes))
+            ax.append(ParasiteAxes(ax[0], sharex=ax[0]))
+            ax.append(ParasiteAxes(ax[0], sharex=ax[0]))
+            ax[0].parasites.append(ax[1])
+            ax[0].parasites.append(ax[2])
+            ax[0].axis["right"].set_visible(False)
 
-                ax[2].axis["right2"] = ax[2].new_fixed_axis(loc="right", offset=(50, 0))
+            ax[1].axis["right"].set_visible(True)
+            ax[1].axis["right"].major_ticklabels.set_visible(True)
+            ax[1].axis["right"].label.set_visible(True)
 
-                lns = ax[0].plot([], marker="o", linestyle="solid", linewidth=2, markersize=3, markerfacecolor=(1, 1, 0, 0.5))
-                lns += ax[1].plot([], marker="o", linestyle="solid", linewidth=1, markersize=2, alpha=0.2)
-                lns += ax[2].plot([], marker="o", linestyle="solid", linewidth=1, markersize=2, alpha=0.2)
+            ax[2].axis["right2"] = ax[2].new_fixed_axis(loc="right", offset=(50, 0))
 
-                ax[1].set_ylabel("Voltage [mV]")
-                ax[2].set_ylabel(r"Current Density [$\mathregular{\frac{mA}{cm^2}}$]")
+            lns = ax[0].plot([], marker="o", linestyle="solid", linewidth=2, markersize=3, markerfacecolor=(1, 1, 0, 0.5))
+            lns += ax[1].plot([], marker="o", linestyle="solid", linewidth=1, markersize=2, alpha=0.2)
+            lns += ax[2].plot([], marker="o", linestyle="solid", linewidth=1, markersize=2, alpha=0.2)
 
-                ax[0].yaxis.set_major_formatter("{x:.2f}")
-                ax[1].yaxis.set_major_formatter("{x:.0f}")
-                ax[2].yaxis.set_major_formatter("{x:.1f}")
+            ax[1].set_ylabel("Voltage [mV]")
+            ax[2].set_ylabel(r"Current Density [$\mathregular{\frac{mA}{cm^2}}$]")
 
-                ax[0].axis["left"].label.set_color(lns[0].get_color())
-                ax[1].axis["right"].label.set_color(lns[1].get_color())
-                ax[2].axis["right2"].label.set_color(lns[2].get_color())
+            ax[0].yaxis.set_major_formatter("{x:.2f}")
+            ax[1].yaxis.set_major_formatter("{x:.0f}")
+            ax[2].yaxis.set_major_formatter("{x:.1f}")
 
-                title = f"MPPT: {dev_name}"
-                xlab = "Time [s]"
-                ylab = r"Power Density [$\mathregular{\frac{mW}{cm^2}}$]"
-            elif "tbl_sweep_events" in event_line["channel"]:
-                ax = self.fig.add_subplot()
-                title = f"J-Vs: {dev_name}"
-                xlab = "Voltage [V]"
-                ylab = r"Current Density [$\mathregular{\frac{mA}{cm^2}}$]"
-                ax.axhline(0, color="black")
-                ax.axvline(0, color="black")
-                ax.annotate("Collecting Data...", xy=(0.5, 0.5), xycoords="axes fraction", va="center", ha="center", bbox=dict(boxstyle="round", fc="chartreuse"))
-                lns = None
-            elif "tbl_ss_events" in event_line["channel"]:
-                ax = self.fig.add_subplot()
-                title = f"Steady State: {dev_name}"
-                xlab = "Time [s]"
-                if event_line["fixed"] == 1:
-                    led_txt = f'Current Fixed @ {event_line["setpoint"]}[mA]'
-                    ylab = "Voltage [mV]"
-                else:
-                    led_txt = f'Voltage Fixed @ {event_line["setpoint"]}[V]'
-                    ylab = r"Current Density [$\mathregular{\frac{mA}{cm^2}}$]"
-                lns = ax.plot([], label=led_txt, marker="o", linestyle="solid", linewidth=1, markersize=2, markerfacecolor=(1, 1, 0, 0.5))
-                ax.legend()
+            ax[0].axis["left"].label.set_color(lns[0].get_color())
+            ax[1].axis["right"].label.set_color(lns[1].get_color())
+            ax[2].axis["right2"].label.set_color(lns[2].get_color())
+
+            title = f"MPPT: {dev_name}"
+            xlab = "Time [s]"
+            ylab = r"Power Density [$\mathregular{\frac{mW}{cm^2}}$]"
+        elif "tbl_sweep_events" in event_line["channel"]:
+            ax = self.fig.add_subplot()
+            title = f"J-Vs: {dev_name}"
+            xlab = "Voltage [V]"
+            ylab = r"Current Density [$\mathregular{\frac{mA}{cm^2}}$]"
+            ax.axhline(0, color="black")
+            ax.axvline(0, color="black")
+            ax.annotate("Collecting Data...", xy=(0.5, 0.5), xycoords="axes fraction", va="center", ha="center", bbox=dict(boxstyle="round", fc="chartreuse"))
+            lns = None
+        elif "tbl_ss_events" in event_line["channel"]:
+            ax = self.fig.add_subplot()
+            title = f"Steady State: {dev_name}"
+            xlab = "Time [s]"
+            if event_line["fixed"] == 1:
+                led_txt = f'Current Fixed @ {event_line["setpoint"]}[mA]'
+                ylab = "Voltage [mV]"
             else:
-                ax = self.fig.add_subplot()
-                title = "Unknown"
-                xlab = ""
-                ylab = ""
-                lns = ax.plot([], marker="o", linestyle="solid", linewidth=1, markersize=2, markerfacecolor=(1, 1, 0, 0.5))
+                led_txt = f'Voltage Fixed @ {event_line["setpoint"]}[V]'
+                ylab = r"Current Density [$\mathregular{\frac{mA}{cm^2}}$]"
+            lns = ax.plot([], label=led_txt, marker="o", linestyle="solid", linewidth=1, markersize=2, markerfacecolor=(1, 1, 0, 0.5))
+            ax.legend()
+        else:
+            ax = self.fig.add_subplot()
+            title = "Unknown"
+            xlab = ""
+            ylab = ""
+            lns = ax.plot([], marker="o", linestyle="solid", linewidth=1, markersize=2, markerfacecolor=(1, 1, 0, 0.5))
 
-            if isinstance(ax, list):
-                # ax[2].annotate("Collecting Data...", xy=(0.5, 0.5), xycoords="axes fraction", va="center", ha="center", bbox=dict(boxstyle="round", fc="chartreuse"))
-                ax[0].set_title(title)
-                ax[0].set_xlabel(xlab)
-                ax[0].set_ylabel(ylab)
-                ax[0].grid(True)
-            elif ax:
-                ax.set_title(title)
-                ax.set_xlabel(xlab)
-                ax.set_ylabel(ylab)
-                ax.grid(True)
+        if isinstance(ax, list):
+            # ax[2].annotate("Collecting Data...", xy=(0.5, 0.5), xycoords="axes fraction", va="center", ha="center", bbox=dict(boxstyle="round", fc="chartreuse"))
+            ax[0].set_title(title)
+            ax[0].set_xlabel(xlab)
+            ax[0].set_ylabel(ylab)
+            ax[0].grid(True)
+        elif ax:
+            ax.set_title(title)
+            ax.set_xlabel(xlab)
+            ax.set_ylabel(ylab)
+            ax.grid(True)
 
-            self.register_event(event_line)
+        self.register_event(event_line)
 
     @GObject.Property(type=GObject.TYPE_INT)
     def width_px(self):
@@ -268,6 +266,7 @@ class DataRow(GObject.Object):
         # {"name": "dark_area", "title": "Dark Area[cm^2]", "width": None},
         {"name": "voc_ss", "title": "V_oc[V]", "width": 100},
         {"name": "jsc_ss", "title": "J_sc[mA/cm^2]", "width": None},
+        {"name": "ff_ss", "title": "Fill Factor[%]", "width": None},
         {"name": "pmax_ss", "title": "P_max[mW/cm^2]", "width": None},
     ]
 
@@ -322,6 +321,10 @@ class DataRow(GObject.Object):
     @GObject.Property(type=str)
     def pmax_ss(self):
         return self._row_data["pmax_ss"]
+
+    @GObject.Property(type=str)
+    def ff_ss(self):
+        return self._row_data["ff_ss"]
 
     @GObject.Property(type=str)
     def good_contact(self):
@@ -393,13 +396,17 @@ class Interface(object):
 
         self.settings = Gio.Settings.new(app_id)
 
-        # css = """
-        # css_red_bg {
-        #     background: red;
-        # }
-        # """
-        # css_prov = Gtk.CssProvider.new()
-        # css_prov.load_from_data(css.encode())
+        css = """
+        .info_bg {
+            background: LightYellow;
+        }
+        .warn_bg {
+            background: Red;
+        }
+        """
+        css_prov = Gtk.CssProvider.new()
+        css_prov.load_from_data(css.encode())
+        Gtk.StyleContext.add_provider_for_display(Gdk.Display.get_default(), css_prov, Gtk.STYLE_PROVIDER_PRIORITY_USER)
 
         # self.sorter = Gtk.StringSorter.new()
         self.row_model = Gio.ListStore.new(DataRow)
@@ -779,6 +786,7 @@ class Interface(object):
         # canvas.connect("map", self.was_mapped)
         # canvas.connect("unmap", self.was_unmapped)
         list_item.set_child(canvas)
+        canvas.get_parent().add_css_class("red_bg")
 
     def _on_hfactory_unbind(self, factory, list_item):
         canvas = list_item.get_child()
@@ -801,13 +809,18 @@ class Interface(object):
         # al = Pango.AttrList.new()
         # al.insert(bg_col_attr)
         # cell.props.attributes = al
-        # # cell.props.attributes = Pango.AttrList.from_string("bgcolor=red")
         cell._binding = None
         list_item.set_child(cell)
 
     def _on_factory_bind(self, factory, list_item, what):
         cell = list_item.get_child()
         data_row = list_item.get_item()
+        if not data_row.props.good_contact:
+            if what == "good_contact":
+                cell.props.attributes = self.bal
+                cell.get_parent().add_css_class("warn_bg")
+            else:
+                cell.get_parent().add_css_class("info_bg")
         cell._binding = data_row.bind_property(what, cell, "text", GObject.BindingFlags.SYNC_CREATE)
 
     def _on_factory_unbind(self, factory, list_item):
