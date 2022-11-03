@@ -262,13 +262,13 @@ class DataRow(GObject.Object):
         {"name": "run_name", "title": "Run Name", "width": 140},
         {"name": "slot", "title": "Slot", "width": None},
         {"name": "pad", "title": "Pad", "width": None},
+        {"name": "good_contact", "title": "Contact Good", "width": None},
         {"name": "user_label", "title": "Label", "width": 120},
         {"name": "area", "title": "Area[cm^2]", "width": None},
         # {"name": "dark_area", "title": "Dark Area[cm^2]", "width": None},
         {"name": "voc_ss", "title": "V_oc[V]", "width": 100},
         {"name": "jsc_ss", "title": "J_sc[mA/cm^2]", "width": None},
         {"name": "pmax_ss", "title": "P_max[mW/cm^2]", "width": None},
-        {"name": "good_contact", "title": "Contact Good", "width": None},
     ]
 
     def __init__(self, **kwargs):
@@ -392,6 +392,14 @@ class Interface(object):
         self.app.connect("shutdown", self.on_app_shutdown)
 
         self.settings = Gio.Settings.new(app_id)
+
+        # css = """
+        # css_red_bg {
+        #     background: red;
+        # }
+        # """
+        # css_prov = Gtk.CssProvider.new()
+        # css_prov.load_from_data(css.encode())
 
         # self.sorter = Gtk.StringSorter.new()
         self.row_model = Gio.ListStore.new(DataRow)
@@ -787,6 +795,13 @@ class Interface(object):
 
     def _on_factory_setup(self, factory, list_item):
         cell = Gtk.Inscription()
+        # bg_color = Pango.Color()
+        # bg_color.parse("red")
+        # bg_col_attr = Pango.attr_background_new(bg_color.red, bg_color.green, bg_color.blue)
+        # al = Pango.AttrList.new()
+        # al.insert(bg_col_attr)
+        # cell.props.attributes = al
+        # # cell.props.attributes = Pango.AttrList.from_string("bgcolor=red")
         cell._binding = None
         list_item.set_child(cell)
 
@@ -1374,15 +1389,46 @@ class Interface(object):
         where
             trd.run_id = {rid}
         """
+        # get the top and bottom contact status for each slot
+        query0 = f"""
+        select
+            tss.name slot,
+            tcc.pass good_contact
+        from
+            {self.db_schema_dot}tbl_contact_checks tcc
+        join {self.db_schema_dot}tbl_setup_slots tss on
+            tss.id = tcc.setup_slot_id
+        where
+            run_id = {rid}
+            and (pad_name = 'TOP'
+                or pad_name = 'BOT')
+        """
         try:
             with psycopg.connect(self.db_url) as conn:
                 with conn.cursor() as cur:
+                    cur.execute(query0)
+                    all_tb_cons = []
+                    for record in cur:
+                        row = {}
+                        for col, val in zip(cur.description, record):
+                            row[col.name] = val
+                        all_tb_cons.append(row)
+
+                    # condense the connection results to one per slot
+                    tb_cons = {}
+                    for row in all_tb_cons:
+                        if row["slot"] in tb_cons:
+                            tb_cons[row["slot"]] = tb_cons[row["slot"]] and row["good_contact"]
+                        else:
+                            tb_cons[row["slot"]] = row["good_contact"]
+
                     cur.execute(query1)
                     for record in cur:
                         rcd = {}
                         for col, val in zip(cur.description, record):
                             rcd[col.name] = val
                         rcd["run_id"] = rid
+                        rcd["good_contact"] = rcd["good_contact"] and tb_cons[rcd["slot"]]  # roll in the top&bot checks
                         self.row_model.append(DataRow(**rcd))
                         self.known_devices[str(rcd["device_id"])] = rcd
         except Exception as e:
