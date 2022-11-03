@@ -66,7 +66,7 @@ class APlot(GObject.Object):
         if this_device["good_contact"]:
             style = "default"
         else:
-            style = "ggplot"
+            style = "dark_background"
         with mpls_context(style):
             self.fig = Figure(figsize=figsize, dpi=100, layout="constrained")
 
