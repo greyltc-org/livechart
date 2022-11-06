@@ -255,7 +255,7 @@ class DataRow(GObject.Object):
 
     __gtype_name__ = "DataRow"
     col_defs = [
-        # {"name": "user", "title": "User", "width": 120},
+        {"name": "user", "title": "User", "width": 120},
         # {"name": "run_id", "title": "Run ID", "width": 80},
         {"name": "run_name", "title": "Run Name", "width": 140},
         {"name": "slot", "title": "Slot", "width": None},
@@ -282,6 +282,10 @@ class DataRow(GObject.Object):
             self._row_data[key] = val
 
     # TODO: possibly try to use a class factory or something for all these instead of doing them manually
+    @GObject.Property(type=str)
+    def user(self):
+        return self._row_data["user_label"]
+
     @GObject.Property(type=str)
     def user_label(self):
         return self._row_data["user_label"]
@@ -1370,6 +1374,7 @@ class Interface(object):
         """updates known devices given a run id"""
         query1 = f"""
         select
+            tr.user user,
             tr.name run_name,
             trd.device_id device_id,
             tss.name slot,
@@ -1427,7 +1432,7 @@ class Interface(object):
                             row[col.name] = val
                         all_tb_cons.append(row)
 
-                    # condense the connection results to one per slot
+                    # condense the top/bot pad connection results to one per slot
                     tb_cons = {}
                     for row in all_tb_cons:
                         if row["slot"] in tb_cons:
