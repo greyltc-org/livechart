@@ -1374,7 +1374,7 @@ class Interface(object):
         """updates known devices given a run id"""
         query1 = f"""
         select
-            tr.user user,
+            tu.name user,
             tr.name run_name,
             trd.device_id device_id,
             tss.name slot,
