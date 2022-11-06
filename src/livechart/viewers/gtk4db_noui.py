@@ -7,6 +7,7 @@ from gi.repository import GLib, Gtk, Gio, GObject, Adw, Gdk, GdkPixbuf, Pango
 from typing import Generator
 
 import livechart
+import json
 
 # import pygal
 # from pygal.style import LightSolarizedStyle
@@ -262,6 +263,7 @@ class DataRow(GObject.Object):
         {"name": "pad", "title": "Pad", "width": None},
         {"name": "good_contact", "title": "Contact Good", "width": None},
         {"name": "user_label", "title": "Label", "width": 120},
+        {"name": "var_lump", "title": "Lumped Variables", "width": None},
         {"name": "area", "title": "Area[cm^2]", "width": None},
         # {"name": "dark_area", "title": "Dark Area[cm^2]", "width": None},
         {"name": "voc_ss", "title": "V_oc[V]", "width": 100},
@@ -311,8 +313,12 @@ class DataRow(GObject.Object):
         return self._row_data["area"]
 
     @GObject.Property(type=str)
-    def dark_area(self):
-        return self._row_data["dark_area"]
+    def var_lump(self):
+        return self._row_data["var_lump"]
+
+    # @GObject.Property(type=str)
+    # def dark_area(self):
+    #    return self._row_data["dark_area"]
 
     @GObject.Property(type=str)
     def voc_ss(self):
@@ -1372,7 +1378,36 @@ class Interface(object):
 
     def fetch_dev_deets(self, rid: int):
         """updates known devices given a run id"""
+        # get vairables and the values for those
+        query0 = f"""
+        select
+            tcb.conf -> 'IV_stuff' -> 'IV' -> 'pad' as pad,
+            tcb.conf -> 'IV_stuff' -> 'IV' -> 'slot' as slot,
+            tcb.conf -> 'IV_stuff' -> 'IV' -> 'user_vars' as uvars
+        from
+            {self.db_schema_dot}tbl_runs tr
+        join {self.db_schema_dot}tbl_conf_bs tcb on
+            tcb.id = tr.conf_b_id
+        where
+            tr.id = {rid}
+        """
+
+        # get the top and bottom contact status for each slot
         query1 = f"""
+        select
+            tss.name slot,
+            tcc.pass good_contact
+        from
+            {self.db_schema_dot}tbl_contact_checks tcc
+        join {self.db_schema_dot}tbl_setup_slots tss on
+            tss.id = tcc.setup_slot_id
+        where
+            run_id = {rid}
+            and (pad_name = 'TOP'
+                or pad_name = 'BOT')
+        """
+
+        query2 = f"""
         select
             tu.name user,
             tr.name run_name,
@@ -1407,24 +1442,24 @@ class Interface(object):
         where
             trd.run_id = {rid}
         """
-        # get the top and bottom contact status for each slot
-        query0 = f"""
-        select
-            tss.name slot,
-            tcc.pass good_contact
-        from
-            {self.db_schema_dot}tbl_contact_checks tcc
-        join {self.db_schema_dot}tbl_setup_slots tss on
-            tss.id = tcc.setup_slot_id
-        where
-            run_id = {rid}
-            and (pad_name = 'TOP'
-                or pad_name = 'BOT')
-        """
+
         try:
             with psycopg.connect(self.db_url) as conn:
                 with conn.cursor() as cur:
                     cur.execute(query0)
+                    vars_list = []
+                    for record in cur:
+                        row = {}
+                        for col, val in zip(cur.description, record):
+                            row[col.name] = val
+                        vars_list.append(row)
+
+                    i = 0  # there should be only one row
+                    all_vars = {}
+                    for slot, pad, uvars in zip(vars_list[i]["slot"], vars_list[i]["pad"], vars_list[i]["uvars"]):
+                        all_vars[f"{slot}{pad}"] = uvars
+
+                    cur.execute(query1)
                     all_tb_cons = []
                     for record in cur:
                         row = {}
@@ -1440,11 +1475,12 @@ class Interface(object):
                         else:
                             tb_cons[row["slot"]] = row["good_contact"]
 
-                    cur.execute(query1)
+                    cur.execute(query2)
                     for record in cur:
                         rcd = {}
                         for col, val in zip(cur.description, record):
                             rcd[col.name] = val
+                        rcd["var_lump"] = "|".join(all_vars[f'{rcd["slot"]}{rcd["pad"]}'].values())
                         rcd["run_id"] = rid
                         rcd["good_contact"] = rcd["good_contact"] and tb_cons[rcd["slot"]]  # roll in the top&bot checks
                         self.row_model.append(DataRow(**rcd))
