@@ -284,7 +284,7 @@ class DataRow(GObject.Object):
     # TODO: possibly try to use a class factory or something for all these instead of doing them manually
     @GObject.Property(type=str)
     def user(self):
-        return self._row_data["user_label"]
+        return self._row_data["user"]
 
     @GObject.Property(type=str)
     def user_label(self):
