@@ -415,7 +415,7 @@ class Interface(object):
         }
         """
         css_prov = Gtk.CssProvider.new()
-        css_prov.load_from_data(css.encode())
+        css_prov.load_from_string(css)
         Gtk.StyleContext.add_provider_for_display(Gdk.Display.get_default(), css_prov, Gtk.STYLE_PROVIDER_PRIORITY_USER)
 
         # self.sorter = Gtk.StringSorter.new()
