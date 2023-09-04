@@ -1499,7 +1499,8 @@ class Interface(object):
         for chan in self.all_channels:
             row_label = Gtk.Label.new()
             row_label.props.attributes = self.mal
-            row_label.set_text(chan[1])
+            if chan and (len(chan) > 1):
+                row_label.set_text(chan[1])
             chan_row = Gtk.ListBoxRow()
             chan_row.props.activatable = False
             chan_row.props.child = row_label
